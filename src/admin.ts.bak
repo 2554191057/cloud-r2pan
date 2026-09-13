@@ -998,6 +998,8 @@ export async function handleAdminApi(
     return json({ ok: true });
   }
 
+  return json({ error: "not_found" }, 404);
+
   // ─═════════════════════════════════════════════════════════════════
   // 激活码管理
   // ─═════════════════════════════════════════════════════════════════
@@ -1193,6 +1195,4 @@ export async function handleAdminApi(
 
     return json({ summary, batches });
   }
-
-  return json({ error: "not_found" }, 404);
 }
