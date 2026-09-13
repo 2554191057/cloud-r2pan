@@ -1768,6 +1768,13 @@ async function loadCodes(){
     } catch(err) { toast(err.message, 'err'); }
   };
 
+  // 自动选中第一个有效批次（如果还没选），让"按批次作废"等操作立即可用
+  if (!codesBatchId && batchOptions.length > 0) {
+    codesBatchId = batchOptions[0].batch_id;
+    const sel = $('#cf-batch');
+    if (sel) sel.value = codesBatchId;
+  }
+
   loadCodesList();
 }
 
