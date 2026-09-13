@@ -792,6 +792,9 @@ export async function handleAdminApi(
       admin_ips: s.adminIps,
       // 下载市场首页
       home_redirect_market: s.homeRedirectMarket,
+      // 激活码浮动按钮
+      codes_floating_button_enabled: s.codesFloatingButtonEnabled,
+      codes_floating_button_position: s.codesFloatingButtonPosition,
     });
   }
 
@@ -846,6 +849,17 @@ export async function handleAdminApi(
     // 下载市场作为首页
     if (typeof body.home_redirect_market === "boolean") {
       patch.home_redirect_market = body.home_redirect_market ? "1" : "0";
+    }
+
+    // 激活码浮动按钮
+    if (typeof body.codes_floating_button_enabled === "boolean") {
+      patch.codes_floating_button_enabled = body.codes_floating_button_enabled ? "1" : "0";
+    }
+    if (typeof body.codes_floating_button_position === "string") {
+      const pos = body.codes_floating_button_position;
+      if (pos === "top-right" || pos === "top-left") {
+        patch.codes_floating_button_position = pos;
+      }
     }
 
     await updateSettings(env, patch);

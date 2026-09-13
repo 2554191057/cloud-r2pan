@@ -216,6 +216,10 @@ export async function handleShareInfo(req: Request, env: Env, token: string): Pr
       client_id: settings.oauthClientId,
       authed: oauthAuthed,
     },
+    codes_floating_button: {
+      enabled: settings.codesFloatingButtonEnabled,
+      position: settings.codesFloatingButtonPosition,
+    },
   });
 }
 
