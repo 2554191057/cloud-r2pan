@@ -32,9 +32,13 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   const url = new URL(req.url);
   const path = url.pathname;
 
-  // 首页 → 管理后台
+  // 首页：根据管理员设置决定去向（默认 → /admin；开启后 → /market）
   if (path === "/") {
-    return Response.redirect(new URL("/admin", url).toString(), 302);
+    await ensureSchema(env);
+    const { getSettings } = await import("./settings");
+    const s = await getSettings(env);
+    const target = s.homeRedirectMarket ? "/market" : "/admin";
+    return Response.redirect(new URL(target, url).toString(), 302);
   }
 
   // 管理后台页面

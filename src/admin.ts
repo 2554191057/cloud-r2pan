@@ -789,6 +789,8 @@ export async function handleAdminApi(
       oauth_has_enabled_providers: enabledProviders.length > 0,
       // IP 白名单
       admin_ips: s.adminIps,
+      // 下载市场首页
+      home_redirect_market: s.homeRedirectMarket,
     });
   }
 
@@ -838,6 +840,11 @@ export async function handleAdminApi(
     // 管理员 IP 白名单
     if (typeof body.admin_ips === "string") {
       patch.admin_ips = body.admin_ips.trim();
+    }
+
+    // 下载市场作为首页
+    if (typeof body.home_redirect_market === "boolean") {
+      patch.home_redirect_market = body.home_redirect_market ? "1" : "0";
     }
 
     await updateSettings(env, patch);

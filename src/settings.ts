@@ -65,6 +65,10 @@ export interface Settings {
    * 这些 IP 的下载流量不受 trafficLimitBytes 限额约束。
    */
   adminIps: string;
+
+  // ═══════ 下载市场首页 ═══════
+  /** 是否将根路径 "/" 重定向到下载市场（而不是 /admin）。默认 false。 */
+  homeRedirectMarket: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -94,6 +98,8 @@ export const DEFAULT_SETTINGS: Settings = {
   oauthCustomUserinfoUrl: "",
   oauthCustomTokenField: "access_token",
   adminIps: "",
+  // 下载市场
+  homeRedirectMarket: false,
 };
 
 function toInt(v: unknown, fallback: number): number {
@@ -148,6 +154,7 @@ export async function getSettings(env: Env): Promise<Settings> {
     oauthCustomUserinfoUrl: map.get("oauth_custom_userinfo_url") ?? "",
     oauthCustomTokenField: map.get("oauth_custom_token_field") ?? DEFAULT_SETTINGS.oauthCustomTokenField,
     adminIps: map.get("admin_ips") ?? "",
+    homeRedirectMarket: map.get("home_redirect_market") === "1",
   };
 }
 
