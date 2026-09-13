@@ -74,6 +74,7 @@ export async function handleAdminApi(
   ctx: ExecutionContext,
   path: string
 ): Promise<Response> {
+  try {
   await ensureSchema(env);
   const method = req.method;
   const url = new URL(req.url);
@@ -1261,4 +1262,12 @@ export async function handleAdminApi(
   }
 
   return json({ error: "not_found" }, 404);
+  } catch (e: any) {
+    console.error("[handleAdminApi]", e?.stack || e);
+    return json({
+      error: "server_error",
+      message: String(e?.message ?? e),
+      stack: (e?.stack || "").split("\n").slice(0, 8).join("\n"),
+    }, 500);
+  }
 }
