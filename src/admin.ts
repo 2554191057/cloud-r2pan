@@ -1131,7 +1131,13 @@ export async function handleAdminApi(
 
     const where: string[] = [];
     const binds: any[] = [];
-    if (status) { where.push("status = ?"); binds.push(status); }
+    // effective_status 表达式：revoked 优先，然后动态 expired/exhausted，否则取原始 status
+    const effectiveStatusExpr = `CASE WHEN status = 'revoked' THEN 'revoked'
+      WHEN expires_at IS NOT NULL AND expires_at < ? THEN 'expired'
+      WHEN traffic_bytes > 0 AND used_bytes >= traffic_bytes THEN 'exhausted'
+      ELSE status END`;
+    const now = Date.now();
+    if (status) { where.push(`(${effectiveStatusExpr}) = ?`); binds.push(now, status); }
     if (batchId) { where.push("batch_id = ?"); binds.push(batchId); }
     if (plan) { where.push("plan_id = ?"); binds.push(plan); }
     if (q) { where.push("(code LIKE ? OR notes LIKE ?)"); binds.push(`%${q}%`, `%${q}%`); }
@@ -1145,6 +1151,12 @@ export async function handleAdminApi(
 
     const rows = results.map((r) => {
       const status = formatCodeStatus(r);
+      // 计算 effective status：在 DB status 基础上，叠加动态过期/耗尽判断
+      let effectiveStatus: string = r.status;
+      if (r.status !== "revoked") {
+        if (r.expires_at && r.expires_at < now) effectiveStatus = "expired";
+        else if (r.traffic_bytes > 0 && r.used_bytes >= r.traffic_bytes) effectiveStatus = "exhausted";
+      }
       return {
         id: r.id,
         code: r.code,
@@ -1155,7 +1167,7 @@ export async function handleAdminApi(
         used_bytes: r.used_bytes,
         days_valid: r.days_valid,
         quota_message: r.quota_message,
-        status: r.status,
+        status: effectiveStatus,
         remaining: status?.remaining,
         pct: status?.pct,
         expired: status?.expired,
@@ -1197,7 +1209,7 @@ export async function handleAdminApi(
   // POST /api/admin/codes/:id/revoke — 作废一个码
   const codeRevokeMatch = /^\/api\/admin\/codes\/([^/]+)\/revoke$/.exec(path);
   if (codeRevokeMatch && method === "POST") {
-    await env.db.prepare("UPDATE activation_codes SET status = 'revoked' WHERE id = ?1").bind(codeRevokeMatch![1]).run();
+    await env.db.prepare("UPDATE activation_codes SET status = 'revoked' WHERE id = ?1 AND status != 'revoked'").bind(codeRevokeMatch![1]).run();
     return json({ ok: true });
   }
 
@@ -1210,11 +1222,13 @@ export async function handleAdminApi(
     }
     const codes: string[] = (body.codes ?? []) as string[];
     if (codes.length > 0) {
-      const stmts = codes.map((c) =>
-        env.db.prepare("UPDATE activation_codes SET status = 'revoked' WHERE code = ?1").bind(c)
+      // 统一 trim + 大写，与 findCodeByString 的查询口径一致
+      const normalized = codes.map((c) => c.trim().toUpperCase()).filter(Boolean);
+      const stmts = normalized.map((c) =>
+        env.db.prepare("UPDATE activation_codes SET status = 'revoked' WHERE code = ?1 AND status != 'revoked'").bind(c)
       );
       await env.db.batch(stmts);
-      return json({ ok: true, count: codes.length });
+      return json({ ok: true, count: normalized.length });
     }
     return json({ error: msg(req, "缺少 batch_id 或 codes", "Missing batch_id or codes") }, 400);
   }
@@ -1236,18 +1250,29 @@ export async function handleAdminApi(
     if (sp.get("plan")) { where.push("plan_id = ?"); binds.push(sp.get("plan")); }
     const whereSql = where.length ? "WHERE " + where.join(" AND ") : "";
 
+    // 用 effective status 替代原始 status，确保动态过期/耗尽的码也被正确统计
+    const now = Date.now();
     const summary = await env.db.prepare(
       `SELECT
          COUNT(*) AS total,
-         SUM(CASE WHEN status = 'unused' THEN 1 ELSE 0 END) AS unused,
-         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
+         SUM(CASE WHEN status = 'revoked' THEN 0
+                  WHEN expires_at IS NOT NULL AND expires_at < ? THEN 0
+                  WHEN traffic_bytes > 0 AND used_bytes >= traffic_bytes THEN 0
+                  WHEN status = 'unused' THEN 1 ELSE 0 END) AS unused,
+         SUM(CASE WHEN status = 'revoked' THEN 0
+                  WHEN expires_at IS NOT NULL AND expires_at < ? THEN 0
+                  WHEN traffic_bytes > 0 AND used_bytes >= traffic_bytes THEN 0
+                  WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
          SUM(CASE WHEN status = 'revoked' THEN 1 ELSE 0 END) AS revoked,
-         SUM(CASE WHEN status = 'expired' THEN 1 ELSE 0 END) AS expired,
-         SUM(CASE WHEN status = 'exhausted' THEN 1 ELSE 0 END) AS exhausted,
+         SUM(CASE WHEN status = 'revoked' THEN 0
+                  WHEN expires_at IS NOT NULL AND expires_at < ? THEN 1 ELSE 0 END) AS expired,
+         SUM(CASE WHEN status = 'revoked' THEN 0
+                  WHEN expires_at IS NOT NULL AND expires_at < ? THEN 0
+                  WHEN traffic_bytes > 0 AND used_bytes >= traffic_bytes THEN 1 ELSE 0 END) AS exhausted,
          SUM(used_bytes) AS used_bytes,
          SUM(traffic_bytes) AS total_bytes
        FROM activation_codes ${whereSql}`
-    ).bind(...binds).first() as any;
+    ).bind(now, now, now, now, ...binds).first() as any;
 
     // 各 batch 汇总
     const batches = where.length ? [] : (await env.db.prepare(

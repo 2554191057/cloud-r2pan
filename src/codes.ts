@@ -133,8 +133,9 @@ export async function deductQuota(
     bind = [newUsed, fresh.id];
   } else {
     // 原子 check-and-update：只有 used + bytes <= total 才更新，防止并发超扣
+    // 额度耗尽时自动把 status 切为 'exhausted'，让后台统计/过滤能正确识别
     sql =
-      "UPDATE activation_codes SET used_bytes = ?1 WHERE id = ?2 AND used_bytes + ?3 <= traffic_bytes AND status != 'revoked'";
+      "UPDATE activation_codes SET used_bytes = ?1, status = CASE WHEN ?1 >= traffic_bytes THEN 'exhausted' ELSE status END WHERE id = ?2 AND used_bytes + ?3 <= traffic_bytes AND status != 'revoked'";
     bind = [newUsed, fresh.id, bytes];
   }
 
