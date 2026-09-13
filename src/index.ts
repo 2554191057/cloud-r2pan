@@ -182,12 +182,14 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
       AND (s.expires_at IS NULL OR s.expires_at > ?)
       AND (s.max_downloads IS NULL OR s.download_count < s.max_downloads)
       AND s.password_hash IS NULL`;
-    const qFilter = q
-      ? ` AND (f.name LIKE ? OR COALESCE(s.market_title,'') LIKE ? OR COALESCE(s.market_desc,'') LIKE ?)`
+    // SQL LIKE 通配符转义：把用户输入中的 \ % _ 都转义，防止用户靠输入 % 列出所有文件
+    const qEsc = q ? q.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_") : null;
+    const qFilter = qEsc
+      ? ` AND (f.name LIKE ? ESCAPE '\\' OR COALESCE(s.market_title,'') LIKE ? ESCAPE '\\' OR COALESCE(s.market_desc,'') LIKE ? ESCAPE '\\')`
       : "";
     // 构建绑定数组：顺序必须严格匹配 SQL 中 ? 出现的顺序
     // activeFilter 贡献 1 个 ?，qFilter 贡献 3 个 ?
-    const qLike = q ? `%${q}%` : null;
+    const qLike = qEsc ? `%${qEsc}%` : null;
     const countBinds: any[] = [now];
     const listBinds: any[] = [now];
     if (qLike) {

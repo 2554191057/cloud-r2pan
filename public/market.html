@@ -222,16 +222,20 @@ function render(items, total, page, size){
     // 热度徽章只在热度排序时 + 前 N 显示
     const showHeatBadge = state.sort === "hot" && rank && rank <= 10;
     const heatLabel = rank === 1 ? "👑 冠军" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : `🔥 ${heat}`;
+    const safeTitle = escapeHtml(title);
+    const safeFileName = escapeHtml(it.file_name);
+    const safeDesc = escapeHtml(desc);
+    const safeUrl = escapeHtml(it.url);
     return `
-      <a class="card" href="${it.url}" style="animation-delay:${Math.min(i*40,400)}ms">
-        ${showHeatBadge ? `<div class="heat ${heatClass}">${heatLabel}</div>` : ""}
+      <a class="card" href="${safeUrl}" style="animation-delay:${Math.min(i*40,400)}ms">
+        ${showHeatBadge ? `<div class="heat ${heatClass}">${escapeHtml(heatLabel)}</div>` : ""}
         <div class="card-head">
           <div class="icon">${iconFor(it.file_name)}</div>
           <div style="flex:1;min-width:0">
-            <div class="title" title="${title}">${title}${it.market_title && it.market_title !== it.file_name ? `<div class="alt" style="font-size:12px">${it.file_name}</div>` : ""}</div>
+            <div class="title" title="${safeTitle}">${safeTitle}${it.market_title && it.market_title !== it.file_name ? `<div class="alt" style="font-size:12px">${safeFileName}</div>` : ""}</div>
           </div>
         </div>
-        ${desc ? `<div class="desc" title="${desc}">${escapeHtml(desc)}</div>` : `<div class="desc" style="min-height:38px;color:rgba(255,255,255,.35);font-style:italic">暂无描述</div>`}
+        ${desc ? `<div class="desc" title="${safeDesc}">${safeDesc}</div>` : `<div class="desc" style="min-height:38px;color:rgba(255,255,255,.35);font-style:italic">暂无描述</div>`}
         <div class="meta">
           <div class="meta-left">
             <span class="pill">📦 ${fmtSize(it.file_size)}</span>
@@ -282,7 +286,7 @@ qInput.addEventListener("input", () => {
 sortSel.addEventListener("change", () => { state.sort = sortSel.value; state.page = 1; load(); });
 
 function renderEmpty(emoji, title, desc){
-  grid.innerHTML = `<div class="empty"><div class="emoji">${emoji}</div><h3>${title}</h3><p>${desc}</p></div>`;
+  grid.innerHTML = `<div class="empty"><div class="emoji">${escapeHtml(emoji)}</div><h3>${escapeHtml(title)}</h3><p>${escapeHtml(desc)}</p></div>`;
 }
 
 // 初始
