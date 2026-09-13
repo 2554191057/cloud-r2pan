@@ -30,9 +30,15 @@ const SCHEMA_STATEMENTS: string[] = [
     download_count INTEGER NOT NULL DEFAULT 0,
     revoked INTEGER NOT NULL DEFAULT 0,
     password_hash TEXT,
-    password_cipher TEXT
+    password_cipher TEXT,
+    download_name TEXT,
+    is_market INTEGER NOT NULL DEFAULT 0,
+    market_views INTEGER NOT NULL DEFAULT 0,
+    market_title TEXT,
+    market_desc TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS idx_shares_file ON shares(file_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_shares_market ON shares(is_market, revoked)`,
   `CREATE TABLE IF NOT EXISTS download_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     share_id TEXT NOT NULL,
@@ -190,6 +196,12 @@ export async function ensureSchema(env: Env): Promise<void> {
     try { await env.db.prepare("ALTER TABLE shares ADD COLUMN download_name TEXT").run(); } catch {}
     // 迁移：download_logs 加 activation_code 列（记录哪条激活码消耗了流量）
     try { await env.db.prepare("ALTER TABLE download_logs ADD COLUMN activation_code TEXT").run(); } catch {}
+    // 迁移：下载市场字段
+    try { await env.db.prepare("ALTER TABLE shares ADD COLUMN is_market INTEGER NOT NULL DEFAULT 0").run(); } catch {}
+    try { await env.db.prepare("ALTER TABLE shares ADD COLUMN market_views INTEGER NOT NULL DEFAULT 0").run(); } catch {}
+    try { await env.db.prepare("ALTER TABLE shares ADD COLUMN market_title TEXT").run(); } catch {}
+    try { await env.db.prepare("ALTER TABLE shares ADD COLUMN market_desc TEXT").run(); } catch {}
+    try { await env.db.prepare("CREATE INDEX IF NOT EXISTS idx_shares_market ON shares(is_market, revoked)").run(); } catch {}
   } catch {
     // 竞态兜底：可能另一个 Isolate 刚建完表。
     // 再检测一次，确认表存在就算成功

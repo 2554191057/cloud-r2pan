@@ -184,6 +184,12 @@ export async function handleShareInfo(req: Request, env: Env, token: string): Pr
     oauthAuthed = oauthCheck.ok;
   }
 
+  // 市场浏览量累加（仅对 is_market=1 的分享 + 有至少 500ms 间隔的轻量节流）
+  if (!row.revoked && row.is_market) {
+    env.db.prepare("UPDATE shares SET market_views = market_views + 1 WHERE id = ?1 AND is_market = 1")
+      .bind(token).run().catch(() => {}); // 不 await，不阻塞响应
+  }
+
   return Response.json({
     status,
     name: row.name,

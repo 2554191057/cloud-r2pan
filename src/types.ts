@@ -20,6 +20,14 @@ export interface ShareRow {
   revoked: number;
   /** 分享访问密码哈希（salt:sha256hex），未设置则为 null */
   password_hash: string | null;
+  /** 是否公开到下载市场 */
+  is_market?: number;
+  /** 市场浏览量 */
+  market_views?: number;
+  /** 市场标题 */
+  market_title?: string | null;
+  /** 市场描述 */
+  market_desc?: string | null;
 }
 
 export interface FileRow {
