@@ -160,18 +160,46 @@ let schemaReady = false;
  *   3. 只有表真的不存在时才执行 DDL batch —— 且用 try/catch 兜底竞态
  *
  * 绝大多数请求命中 ① 或 ②，不会触发 DDL。
+ *
+ * ⚠️ 注意：ALTER TABLE 迁移语句不参与 schemaReady 短路，每次 ensureSchema 都执行一遍
+ * （用 try/catch 保护，列已存在时静默忽略），保证老用户库升级后列补齐。
  */
-export async function ensureSchema(env: Env): Promise<void> {
-  if (schemaReady) return;
 
-  // ① 防御性检查：如果数据库绑定不存在，直接报错（避免后续崩溃堆栈难以定位）
+/** 所有增量迁移语句 —— 每次 ensureSchema 都执行一遍，幂等安全 */
+const MIGRATION_STATEMENTS: string[] = [
+  "ALTER TABLE shares ADD COLUMN password_hash TEXT",
+  "ALTER TABLE shares ADD COLUMN password_cipher TEXT",
+  "ALTER TABLE shares ADD COLUMN download_name TEXT",
+  "ALTER TABLE download_logs ADD COLUMN activation_code TEXT",
+  "ALTER TABLE shares ADD COLUMN is_market INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE shares ADD COLUMN market_views INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE shares ADD COLUMN market_title TEXT",
+  "ALTER TABLE shares ADD COLUMN market_desc TEXT",
+  "CREATE INDEX IF NOT EXISTS idx_shares_market ON shares(is_market, revoked)",
+];
+
+export async function ensureSchema(env: Env): Promise<void> {
+  // ① 防御性检查：如果数据库绑定不存在，直接报错
   if (!env.db) {
     throw new Error("Database binding 'db' is not configured. " +
       "在 Cloudflare 控制台 → Worker Settings → Bindings 添加 D1 绑定，" +
       "或在 wrangler.jsonc 的 d1_databases 中声明。");
   }
 
-  // ② 跨 Isolate 安全检测：用 sqlite_master 检查表是否存在（比 SELECT 1 FROM table 更可靠）
+  // ② 每次都跑一遍增量迁移 —— 幂等安全（列已存在时 D1 会抛错，被 catch 住静默忽略）
+  // 这样无论老库新库、首次部署还是已跑过 CREATE TABLE，都能补齐所有新增列
+  for (const sql of MIGRATION_STATEMENTS) {
+    try {
+      await env.db.prepare(sql).run();
+    } catch {
+      /* 列/索引已存在，忽略 */
+    }
+  }
+
+  // ③ 基础表已就绪 —— 用 schemaReady 短路 CREATE TABLE
+  if (schemaReady) return;
+
+  // ④ 跨 Isolate 安全检测：用 sqlite_master 检查表是否存在
   try {
     const row: any = await env.db.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='settings'"
@@ -184,32 +212,10 @@ export async function ensureSchema(env: Env): Promise<void> {
     // 查询失败（如数据库完全损坏），继续尝试建表
   }
 
-  // ③ 真正的建表路径（首次部署 / 库被清空时触发）
+  // ⑤ 真正的建表路径（首次部署 / 库被清空时触发）
   // 用 try/catch 处理极端竞态：另一个 Isolate 刚好也在执行 DDL
   try {
     await env.db.batch(SCHEMA_STATEMENTS.map((sql) => env.db.prepare(sql)));
-    // 迁移：旧库补 password_hash 列（若已存在则静默跳过）
-    try {
-      await env.db.prepare("ALTER TABLE shares ADD COLUMN password_hash TEXT").run();
-    } catch {
-      /* 列已存在，忽略 */
-    }
-    // 迁移：旧库补 password_cipher 列（加密后的密码明文）
-    try {
-      await env.db.prepare("ALTER TABLE shares ADD COLUMN password_cipher TEXT").run();
-    } catch {
-      /* 列已存在，忽略 */
-    }
-    // 迁移：自定义下载文件名
-    try { await env.db.prepare("ALTER TABLE shares ADD COLUMN download_name TEXT").run(); } catch {}
-    // 迁移：download_logs 加 activation_code 列（记录哪条激活码消耗了流量）
-    try { await env.db.prepare("ALTER TABLE download_logs ADD COLUMN activation_code TEXT").run(); } catch {}
-    // 迁移：下载市场字段
-    try { await env.db.prepare("ALTER TABLE shares ADD COLUMN is_market INTEGER NOT NULL DEFAULT 0").run(); } catch {}
-    try { await env.db.prepare("ALTER TABLE shares ADD COLUMN market_views INTEGER NOT NULL DEFAULT 0").run(); } catch {}
-    try { await env.db.prepare("ALTER TABLE shares ADD COLUMN market_title TEXT").run(); } catch {}
-    try { await env.db.prepare("ALTER TABLE shares ADD COLUMN market_desc TEXT").run(); } catch {}
-    try { await env.db.prepare("CREATE INDEX IF NOT EXISTS idx_shares_market ON shares(is_market, revoked)").run(); } catch {}
   } catch {
     // 竞态兜底：可能另一个 Isolate 刚建完表。
     // 再检测一次，确认表存在就算成功
