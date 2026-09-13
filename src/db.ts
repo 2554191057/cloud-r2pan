@@ -164,16 +164,24 @@ let schemaReady = false;
 export async function ensureSchema(env: Env): Promise<void> {
   if (schemaReady) return;
 
-  // ② 跨 Isolate 安全检测：settings 表是 schema 中最后创建的一张，
-  // 它存在意味着整个 schema 已就绪
+  // ① 防御性检查：如果数据库绑定不存在，直接报错（避免后续崩溃堆栈难以定位）
+  if (!env.db) {
+    throw new Error("Database binding 'db' is not configured. " +
+      "在 Cloudflare 控制台 → Worker Settings → Bindings 添加 D1 绑定，" +
+      "或在 wrangler.jsonc 的 d1_databases 中声明。");
+  }
+
+  // ② 跨 Isolate 安全检测：用 sqlite_master 检查表是否存在（比 SELECT 1 FROM table 更可靠）
   try {
-    const row = await env.db.prepare("SELECT 1 FROM settings LIMIT 1").first();
+    const row: any = await env.db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='settings'"
+    ).first();
     if (row) {
       schemaReady = true;
       return;
     }
   } catch {
-    // 表不存在或查询失败，继续走 DDL 路径
+    // 查询失败（如数据库完全损坏），继续尝试建表
   }
 
   // ③ 真正的建表路径（首次部署 / 库被清空时触发）
@@ -206,7 +214,9 @@ export async function ensureSchema(env: Env): Promise<void> {
     // 竞态兜底：可能另一个 Isolate 刚建完表。
     // 再检测一次，确认表存在就算成功
     try {
-      const row = await env.db.prepare("SELECT 1 FROM settings LIMIT 1").first();
+      const row: any = await env.db.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='settings'"
+      ).first();
       if (!row) throw new Error("schema still missing after DDL attempt");
     } catch (e) {
       // 表确实没建起来，重新抛出让上层决定

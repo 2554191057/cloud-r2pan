@@ -113,15 +113,26 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
     const sort = url.searchParams.get("sort") || "hot"; // hot | newest | downloads | views
     const now = Date.now();
     // 只返回有效分享：is_market=1, revoked=0, 没过期, 没达上限, 有密码的隐藏
+    // ⚠️ SQLite + D1 只支持纯 ? 占位符，不支持 ?N1 / ?Q1 / ?2 这类扩展语法
     const activeFilter = ` AND s.is_market = 1 AND s.revoked = 0
-      AND (s.expires_at IS NULL OR s.expires_at > ?N1)
+      AND (s.expires_at IS NULL OR s.expires_at > ?)
       AND (s.max_downloads IS NULL OR s.download_count < s.max_downloads)
       AND s.password_hash IS NULL`;
     const qFilter = q
-      ? ` AND (f.name LIKE ?Q1 OR COALESCE(s.market_title,'') LIKE ?Q1 OR COALESCE(s.market_desc,'') LIKE ?Q1)`
+      ? ` AND (f.name LIKE ? OR COALESCE(s.market_title,'') LIKE ? OR COALESCE(s.market_desc,'') LIKE ?)`
       : "";
-    const allBinds: any[] = [now];
-    if (q) allBinds.push(`%${q}%`);
+    // 构建绑定数组：顺序必须严格匹配 SQL 中 ? 出现的顺序
+    // activeFilter 贡献 1 个 ?，qFilter 贡献 3 个 ?
+    const qLike = q ? `%${q}%` : null;
+    const countBinds: any[] = [now];
+    const listBinds: any[] = [now];
+    if (qLike) {
+      // qFilter 有 3 个 ?（同一个值复用三次）
+      countBinds.push(qLike, qLike, qLike);
+      listBinds.push(qLike, qLike, qLike);
+    }
+    // LIMIT / OFFSET 额外两个参数
+    listBinds.push(perPage, (page - 1) * perPage);
     const sortMap: Record<string, string> = {
       hot:   "(s.market_views + s.download_count * 3) DESC",
       newest: "s.created_at DESC",
@@ -131,7 +142,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
     const orderBy = sortMap[sort] || sortMap.hot;
     const countRow: any = await env.db.prepare(
       `SELECT COUNT(*) AS c FROM shares s JOIN files f ON f.id = s.file_id WHERE 1=1 ${activeFilter} ${qFilter}`
-    ).bind(...allBinds).first();
+    ).bind(...countBinds).first();
     const total = countRow?.c ?? 0;
     const { results }: any = await env.db.prepare(
       `SELECT s.id AS share_id, s.created_at, s.download_count, s.market_views, s.market_title, s.market_desc,
@@ -139,8 +150,8 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
        FROM shares s JOIN files f ON f.id = s.file_id
        WHERE 1=1 ${activeFilter} ${qFilter}
        ORDER BY ${orderBy}
-       LIMIT ?${allBinds.length + 1} OFFSET ?${allBinds.length + 2}`
-    ).bind(...allBinds, perPage, (page - 1) * perPage).all();
+       LIMIT ? OFFSET ?`
+    ).bind(...listBinds).all();
     return Response.json({
       ok: true, total, page, size: perPage, sort,
       items: (results ?? []).map((r: any) => ({
