@@ -74,7 +74,6 @@ export async function handleAdminApi(
   ctx: ExecutionContext,
   path: string
 ): Promise<Response> {
-  try {
   await ensureSchema(env);
   const method = req.method;
   const url = new URL(req.url);
@@ -343,16 +342,7 @@ export async function handleAdminApi(
 
   // ── 创建分享 ──────────────────────────────────────
   if (path === "/api/admin/shares" && method === "POST") {
-    const body = await readJson<{
-      file_id: string;
-      expires_hours: number | null;
-      max_downloads: number | null;
-      password: string | null;
-      download_name?: string | null;
-      is_market?: boolean;
-      market_title?: string | null;
-      market_desc?: string | null;
-    }>(req);
+    const body = await readJson<{ file_id: string; expires_hours: number | null; max_downloads: number | null; password: string | null; download_name?: string | null }>(req);
     if (!body.file_id) return json({ error: msg(req, "缺少 file_id", "Missing file_id") }, 400);
     const file = await env.db.prepare("SELECT id FROM files WHERE id = ?1").bind(body.file_id).first();
     if (!file) return json({ error: msg(req, "文件不存在", "File not found") }, 404);
@@ -367,17 +357,11 @@ export async function handleAdminApi(
     const passwordCipher = password ? await encryptSecret(password, env.admin) : null;
     const downloadName =
       typeof body.download_name === "string" && body.download_name.trim() ? body.download_name.trim() : null;
-    const isMarket = body.is_market ? 1 : 0;
-    const marketTitle =
-      typeof body.market_title === "string" && body.market_title.trim() ? body.market_title.trim() : null;
-    const marketDesc =
-      typeof body.market_desc === "string" && body.market_desc.trim() ? body.market_desc.trim() : null;
     const id = randomId(10);
     await env.db.prepare(
-      `INSERT INTO shares(id, file_id, created_at, expires_at, max_downloads, password_hash, password_cipher, download_name, is_market, market_title, market_desc)
-       VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`
+      "INSERT INTO shares(id, file_id, created_at, expires_at, max_downloads, password_hash, password_cipher, download_name) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
     )
-      .bind(id, body.file_id, Date.now(), expiresAt, maxDownloads, passwordHash, passwordCipher, downloadName, isMarket, marketTitle, marketDesc)
+      .bind(id, body.file_id, Date.now(), expiresAt, maxDownloads, passwordHash, passwordCipher, downloadName)
       .run();
     return json({ ok: true, id, url: `/s/${id}` }, 201);
   }
@@ -386,9 +370,7 @@ export async function handleAdminApi(
   if (path === "/api/admin/shares" && method === "GET") {
     const { results } = await env.db.prepare(
       `SELECT s.id, s.file_id, s.created_at, s.expires_at, s.max_downloads, s.download_count, s.revoked,
-              s.password_hash, s.password_cipher, s.download_name,
-              s.is_market, s.market_views, s.market_title, s.market_desc,
-              f.name AS file_name, f.size AS file_size, f.mime AS file_mime
+              s.password_hash, s.password_cipher, s.download_name, f.name AS file_name, f.size AS file_size
        FROM shares s JOIN files f ON f.id = s.file_id
        ORDER BY s.created_at DESC`
     ).all();
@@ -472,48 +454,6 @@ export async function handleAdminApi(
     const r = await env.db.prepare("DELETE FROM shares WHERE id = ?1").bind(shareMatch[1]).run();
     if ((r.meta.changes ?? 0) === 0) return json({ error: msg(req, "分享不存在", "Share not found") }, 404);
     return json({ ok: true });
-  }
-
-  // ── 编辑市场字段（开关 + 标题 + 描述） ────────────
-  const shareMarketMatch = /^\/api\/admin\/shares\/([^/]+)\/market$/.exec(path);
-  if (shareMarketMatch && method === "PUT") {
-    const id = shareMarketMatch[1];
-    const body = await readJson<{ is_market?: boolean; market_title?: string | null; market_desc?: string | null }>(req);
-    const existing = await env.db.prepare("SELECT id FROM shares WHERE id = ?1").bind(id).first();
-    if (!existing) return json({ error: msg(req, "分享不存在", "Share not found") }, 404);
-    const isMarket = body.is_market === undefined ? null : (body.is_market ? 1 : 0);
-    const mTitle = typeof body.market_title === "string" ? (body.market_title.trim() || null) : null;
-    const mDesc = typeof body.market_desc === "string" ? (body.market_desc.trim() || null) : null;
-    // 动态拼 SQL，只更新传入的字段
-    const sets: string[] = [];
-    const binds: any[] = [];
-    if (isMarket !== null) { sets.push("is_market = ?" + (binds.length + 1)); binds.push(isMarket); }
-    if (body.market_title !== undefined) { sets.push("market_title = ?" + (binds.length + 1)); binds.push(mTitle); }
-    if (body.market_desc !== undefined) { sets.push("market_desc = ?" + (binds.length + 1)); binds.push(mDesc); }
-    if (sets.length === 0) return json({ ok: true });
-    binds.push(id);
-    await env.db.prepare(`UPDATE shares SET ${sets.join(", ")} WHERE id = ?${binds.length}`).bind(...binds).run();
-    return json({ ok: true });
-  }
-
-  // ── 管理端市场列表 ──────────────────────────────────
-  if (path === "/api/admin/market" && method === "GET") {
-    const page = Math.max(1, Number(url.searchParams.get("page")) || 1);
-    const perPage = Math.min(100, Math.max(10, Number(url.searchParams.get("size")) || 20));
-    const q = url.searchParams.get("q")?.trim();
-    const filterOnly = url.searchParams.get("only") === "market" ? " AND s.is_market = 1" : "";
-    const where = q
-      ? ` AND (f.name LIKE ?1 OR COALESCE(s.market_title, '') LIKE ?1 OR COALESCE(s.market_desc, '') LIKE ?1)`
-      : "";
-    const base = `FROM shares s JOIN files f ON f.id = s.file_id WHERE s.revoked = 0${filterOnly}${where}`;
-    const countRow: any = await env.db.prepare(`SELECT COUNT(*) AS c ${base}`).bind(...(q ? [`%${q}%`] : [])).first();
-    const total = countRow?.c ?? 0;
-    const { results }: any = await env.db.prepare(
-      `SELECT s.id, s.file_id, s.created_at, s.download_count, s.is_market, s.market_views, s.market_title, s.market_desc,
-              f.name AS file_name, f.size AS file_size
-       ${base} ORDER BY s.created_at DESC LIMIT ?${q ? 2 : 1} OFFSET ?${q ? 3 : 2}`
-    ).bind(...(q ? [`%${q}%`, perPage, (page - 1) * perPage] : [perPage, (page - 1) * perPage])).all();
-    return json({ total, page, size: perPage, rows: results ?? [] });
   }
 
   // ── 下载记录（分页 + 筛选） ────────────────────────
@@ -790,8 +730,6 @@ export async function handleAdminApi(
       oauth_has_enabled_providers: enabledProviders.length > 0,
       // IP 白名单
       admin_ips: s.adminIps,
-      // 下载市场首页
-      home_redirect_market: s.homeRedirectMarket,
     });
   }
 
@@ -841,11 +779,6 @@ export async function handleAdminApi(
     // 管理员 IP 白名单
     if (typeof body.admin_ips === "string") {
       patch.admin_ips = body.admin_ips.trim();
-    }
-
-    // 下载市场作为首页
-    if (typeof body.home_redirect_market === "boolean") {
-      patch.home_redirect_market = body.home_redirect_market ? "1" : "0";
     }
 
     await updateSettings(env, patch);
@@ -1065,6 +998,8 @@ export async function handleAdminApi(
     return json({ ok: true });
   }
 
+  return json({ error: "not_found" }, 404);
+
   // ─═════════════════════════════════════════════════════════════════
   // 激活码管理
   // ─═════════════════════════════════════════════════════════════════
@@ -1259,15 +1194,5 @@ export async function handleAdminApi(
     ).all()).results;
 
     return json({ summary, batches });
-  }
-
-  return json({ error: "not_found" }, 404);
-  } catch (e: any) {
-    console.error("[handleAdminApi]", e?.stack || e);
-    return json({
-      error: "server_error",
-      message: String(e?.message ?? e),
-      stack: (e?.stack || "").split("\n").slice(0, 8).join("\n"),
-    }, 500);
   }
 }

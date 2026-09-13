@@ -4,12 +4,28 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-08-01",
 
-  // R2 与 D1 的绑定改由 Cloudflare 控制台手动配置（Worker → Settings → Bindings），
-  // 这里不再声明，因此部署时不需要 database_id，真实 ID 永不进仓库，也无需环境变量注入。
-  // 对应绑定名（勿改）：
-  //   r2    → R2 Bucket（cloud-r2pan）
-  //   db    → D1 Database（cloud-r2pan）
-  //   admin → Secret（管理后台密钥）
+  // ═══════════════ 基础设施资源绑定（自动查找/创建） ═══════════════
+  // 本地开发时 wrangler dev 自动创建本地实例；
+  // 生产部署时自动在 Cloudflare 上查找同名资源并绑定。
+  // 如果 Cloudflare 控制台已手动配置同名绑定，会优先复用控制台配置，不会覆盖。
+  "d1_databases": [
+    {
+      "binding": "db",
+      "database_name": "cloud-r2pan",
+      "database_id": ""
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "r2",
+      "bucket_name": "cloud-r2pan"
+    }
+  ],
+
+  // ═══════════════ 密钥/敏感配置（不在仓库中声明） ═══════════════
+  // 本地开发：创建 .dev.vars 文件（已 .gitignore）写入 admin=你的密钥
+  // 生产环境：通过 Cloudflare 控制台 → Worker → Settings → Secrets 添加
+  //          或执行 npx wrangler secret put admin
 
   // 将 public/*.html 作为文本模块导入
   "rules": [

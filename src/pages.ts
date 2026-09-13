@@ -1,5 +1,6 @@
 import adminHTML from "../public/admin.html";
 import shareHTML from "../public/share.html";
+import marketHTML from "../public/market.html";
 import { pickLang, type L10n } from "./i18n";
 
 export function serveAdminPage(): Response {
@@ -10,6 +11,12 @@ export function serveAdminPage(): Response {
 
 export function serveSharePage(): Response {
   return new Response(shareHTML, {
+    headers: { "content-type": "text/html;charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
+export function serveMarketPage(): Response {
+  return new Response(marketHTML, {
     headers: { "content-type": "text/html;charset=utf-8", "cache-control": "no-store" },
   });
 }

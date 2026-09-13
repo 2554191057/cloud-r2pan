@@ -30,9 +30,15 @@ const SCHEMA_STATEMENTS: string[] = [
     download_count INTEGER NOT NULL DEFAULT 0,
     revoked INTEGER NOT NULL DEFAULT 0,
     password_hash TEXT,
-    password_cipher TEXT
+    password_cipher TEXT,
+    download_name TEXT,
+    is_market INTEGER NOT NULL DEFAULT 0,
+    market_views INTEGER NOT NULL DEFAULT 0,
+    market_title TEXT,
+    market_desc TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS idx_shares_file ON shares(file_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_shares_market ON shares(is_market, revoked)`,
   `CREATE TABLE IF NOT EXISTS download_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     share_id TEXT NOT NULL,
@@ -158,16 +164,24 @@ let schemaReady = false;
 export async function ensureSchema(env: Env): Promise<void> {
   if (schemaReady) return;
 
-  // ② 跨 Isolate 安全检测：settings 表是 schema 中最后创建的一张，
-  // 它存在意味着整个 schema 已就绪
+  // ① 防御性检查：如果数据库绑定不存在，直接报错（避免后续崩溃堆栈难以定位）
+  if (!env.db) {
+    throw new Error("Database binding 'db' is not configured. " +
+      "在 Cloudflare 控制台 → Worker Settings → Bindings 添加 D1 绑定，" +
+      "或在 wrangler.jsonc 的 d1_databases 中声明。");
+  }
+
+  // ② 跨 Isolate 安全检测：用 sqlite_master 检查表是否存在（比 SELECT 1 FROM table 更可靠）
   try {
-    const row = await env.db.prepare("SELECT 1 FROM settings LIMIT 1").first();
+    const row: any = await env.db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='settings'"
+    ).first();
     if (row) {
       schemaReady = true;
       return;
     }
   } catch {
-    // 表不存在或查询失败，继续走 DDL 路径
+    // 查询失败（如数据库完全损坏），继续尝试建表
   }
 
   // ③ 真正的建表路径（首次部署 / 库被清空时触发）
@@ -190,11 +204,19 @@ export async function ensureSchema(env: Env): Promise<void> {
     try { await env.db.prepare("ALTER TABLE shares ADD COLUMN download_name TEXT").run(); } catch {}
     // 迁移：download_logs 加 activation_code 列（记录哪条激活码消耗了流量）
     try { await env.db.prepare("ALTER TABLE download_logs ADD COLUMN activation_code TEXT").run(); } catch {}
+    // 迁移：下载市场字段
+    try { await env.db.prepare("ALTER TABLE shares ADD COLUMN is_market INTEGER NOT NULL DEFAULT 0").run(); } catch {}
+    try { await env.db.prepare("ALTER TABLE shares ADD COLUMN market_views INTEGER NOT NULL DEFAULT 0").run(); } catch {}
+    try { await env.db.prepare("ALTER TABLE shares ADD COLUMN market_title TEXT").run(); } catch {}
+    try { await env.db.prepare("ALTER TABLE shares ADD COLUMN market_desc TEXT").run(); } catch {}
+    try { await env.db.prepare("CREATE INDEX IF NOT EXISTS idx_shares_market ON shares(is_market, revoked)").run(); } catch {}
   } catch {
     // 竞态兜底：可能另一个 Isolate 刚建完表。
     // 再检测一次，确认表存在就算成功
     try {
-      const row = await env.db.prepare("SELECT 1 FROM settings LIMIT 1").first();
+      const row: any = await env.db.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='settings'"
+      ).first();
       if (!row) throw new Error("schema still missing after DDL attempt");
     } catch (e) {
       // 表确实没建起来，重新抛出让上层决定

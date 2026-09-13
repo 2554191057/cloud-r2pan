@@ -431,6 +431,10 @@ const I18N = {
     ipWhitelistOn: '已启用',
     ipWhitelistOff: '未启用（任何 IP 都能访问 /admin）',
     ipWhitelistHint: '格式：每行一个条目 或 用逗号分隔。例：192.168.1.1, 10.0.0.0/8, 203.0.113.0/24',
+    // 下载市场首页
+    homeRedirectMarket: '下载市场作为首页',
+    homeRedirectMarketD: '访客直接访问域名根路径 / 时，自动跳转到下载市场页面（/market）而不是管理后台（/admin）',
+    homeRedirectMarketHint: '默认关闭。开启后，您的站点首页就是下载市场，普通访客无法直接看到 /admin。管理员仍然可以通过 /admin 显式访问后台。',
     // 2FA 设置
     twofa: '两步验证 (TOTP)',
     twofaD: '使用 Google Authenticator / Microsoft Authenticator 等应用生成验证码',
@@ -691,6 +695,10 @@ const I18N = {
     ipWhitelistOn: 'Enabled',
     ipWhitelistOff: 'Not enabled (any IP can access /admin)',
     ipWhitelistHint: 'Format: one per line OR comma-separated. e.g. 192.168.1.1, 10.0.0.0/8, 203.0.113.0/24',
+    // Marketplace as home
+    homeRedirectMarket: 'Marketplace as Homepage',
+    homeRedirectMarketD: 'When visitors land on your root domain /, redirect them to the marketplace (/market) instead of the admin panel (/admin)',
+    homeRedirectMarketHint: 'Off by default. When enabled, your site homepage becomes the marketplace. Admins can still reach /admin explicitly.',
     // 2FA settings
     twofa: 'Two-Factor Authentication (TOTP)',
     twofaD: 'Use Google Authenticator / Microsoft Authenticator to generate one-time codes',
@@ -1917,6 +1925,17 @@ async function loadSettings(){
         </div>
       </div>
     </div>
+    <!-- 下载市场作为首页 -->
+    <div class="glass group">
+      <div class="row">
+        <div class="info"><div class="t">🏪 ${esc(t('homeRedirectMarket'))}</div><div class="d">${esc(t('homeRedirectMarketD'))}</div></div>
+        <label class="switch">
+          <input type="checkbox" id="st-home-market" ${s.home_redirect_market ? 'checked' : ''}>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="tip" style="margin-top:8px">${esc(t('homeRedirectMarketHint'))}</div>
+    </div>
     <!-- 2FA 组 -->
     <div class="glass group">
       <div class="row">
@@ -2032,6 +2051,7 @@ async function loadSettings(){
       ban_hours: Number($('#st-banhours').value) || 0,
       oauth_enabled: $('#oauth-enabled').checked,
       admin_ips: $('#st-adminips').value.trim(),
+      home_redirect_market: $('#st-home-market').checked,
     };
     await api('/api/admin/settings', { method:'PUT', body: JSON.stringify(body) });
     toast(t('saved'));

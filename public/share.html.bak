@@ -381,6 +381,22 @@ function renderError(title,msg){
     <div class="hint" style="margin-top:12px">${esc(msg)}</div>`;
 }
 
+function render(d, siteName, oauthErr){
+  const ext = extOf(d.name);
+  const gone = {
+    gone:[t('goneTitle'), t('goneMsg')],
+    expired:[t('expiredTitle'), t('expiredMsg')],
+    maxed:[t('maxedTitle'), t('maxedMsg', {n: d.max_downloads})]
+  }[d.status];
+  if(gone){ renderError(gone[0],gone[1]); return; }
+
+  // Turnstile 判断：后端返回了 needs_now (on_share 模式已判断) 或 mode=on_download 时需要
+  const ts = d.turnstile || {};
+  const tsEnabled = ts.enabled && ts.sitekey;
+  const tsOnShare = ts.mode === 'on_share' || ts.mode === 'both';
+  const tsOnDownload = ts.mode === 'on_download' || ts.mode === 'both';
+  const needTsNow = tsEnabled && ((tsOnShare && ts.needs_now) || (tsOnDownload));
+
 function render(d, siteName, oauthErr, oauthProviders){
   const ext = extOf(d.name);
   const gone = {
