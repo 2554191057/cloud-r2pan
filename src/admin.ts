@@ -1,7 +1,8 @@
 import type { Env } from "./types";
 import { ensureSchema, randomId } from "./db";
+import { generateCodes, makeBatchId, formatCodeStatus, findCodeByString } from "./codes";
 import { getSettings, updateSettings } from "./settings";
-import { checkAdminKey, createSession, verifySession, clientIp, rateLimitLogin } from "./auth";
+import { checkAdminKey, createSession, verifySession, clientIp, rateLimitLogin, requireAdminIp } from "./auth";
 import { pickLang } from "./i18n";
 import { hashPassword } from "./public";
 import { parseUA } from "./ua";
@@ -76,6 +77,13 @@ export async function handleAdminApi(
   await ensureSchema(env);
   const method = req.method;
   const url = new URL(req.url);
+
+  // ── IP 白名单门禁 ── 空 = 不限制；非空 = 仅白名单 IP 能访问所有 /api/admin/*
+  {
+    const s = await getSettings(env);
+    const denied = requireAdminIp(clientIp(req), s.adminIps);
+    if (denied) return denied;
+  }
 
   // ── 登录（支持 2FA 两阶段） ──────────────────────────────
   if (path === "/api/admin/login" && method === "POST") {
@@ -334,7 +342,7 @@ export async function handleAdminApi(
 
   // ── 创建分享 ──────────────────────────────────────
   if (path === "/api/admin/shares" && method === "POST") {
-    const body = await readJson<{ file_id: string; expires_hours: number | null; max_downloads: number | null; password: string | null }>(req);
+    const body = await readJson<{ file_id: string; expires_hours: number | null; max_downloads: number | null; password: string | null; download_name?: string | null }>(req);
     if (!body.file_id) return json({ error: msg(req, "缺少 file_id", "Missing file_id") }, 400);
     const file = await env.db.prepare("SELECT id FROM files WHERE id = ?1").bind(body.file_id).first();
     if (!file) return json({ error: msg(req, "文件不存在", "File not found") }, 404);
@@ -347,11 +355,13 @@ export async function handleAdminApi(
     const passwordHash = password ? await hashPassword(password) : null;
     // 可逆加密存储密码明文，管理员之后可查看
     const passwordCipher = password ? await encryptSecret(password, env.admin) : null;
+    const downloadName =
+      typeof body.download_name === "string" && body.download_name.trim() ? body.download_name.trim() : null;
     const id = randomId(10);
     await env.db.prepare(
-      "INSERT INTO shares(id, file_id, created_at, expires_at, max_downloads, password_hash, password_cipher) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+      "INSERT INTO shares(id, file_id, created_at, expires_at, max_downloads, password_hash, password_cipher, download_name) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
     )
-      .bind(id, body.file_id, Date.now(), expiresAt, maxDownloads, passwordHash, passwordCipher)
+      .bind(id, body.file_id, Date.now(), expiresAt, maxDownloads, passwordHash, passwordCipher, downloadName)
       .run();
     return json({ ok: true, id, url: `/s/${id}` }, 201);
   }
@@ -360,7 +370,7 @@ export async function handleAdminApi(
   if (path === "/api/admin/shares" && method === "GET") {
     const { results } = await env.db.prepare(
       `SELECT s.id, s.file_id, s.created_at, s.expires_at, s.max_downloads, s.download_count, s.revoked,
-              s.password_hash, s.password_cipher, f.name AS file_name, f.size AS file_size
+              s.password_hash, s.password_cipher, s.download_name, f.name AS file_name, f.size AS file_size
        FROM shares s JOIN files f ON f.id = s.file_id
        ORDER BY s.created_at DESC`
     ).all();
@@ -686,6 +696,11 @@ export async function handleAdminApi(
   // ── 读取设置 ──────────────────────────────────────
   if (path === "/api/admin/settings" && method === "GET") {
     const s = await getSettings(env);
+    // 读 OAuth2 providers 列表给前端展示卡片
+    const providers = await env.db
+      .prepare("SELECT id, label, provider_type, client_id, scope, enabled, updated_at FROM oauth_providers ORDER BY updated_at DESC")
+      .all<{ id: string; label: string; provider_type: string; client_id: string; scope: string; enabled: number; updated_at: number }>();
+    const enabledProviders = providers.results.filter((p) => p.enabled);
     return json({
       site_title: s.siteTitle,
       traffic_limit_gb: s.trafficLimitBytes / 1024 ** 3,
@@ -700,6 +715,21 @@ export async function handleAdminApi(
       turnstile_sitekey_override: s.turnstileSitekeyOverride,
       cloudflare_turnstile_sitekey: !!env.turnstile_sitekey,
       cloudflare_turnstile_secret: !!env.turnstile_secret,
+      turnstile_secret_configured: !!s.turnstileSecretCipher,
+      // OAuth2 总开关 + providers 概要
+      oauth_enabled: s.oauthEnabled,
+      oauth_providers: providers.results.map((p) => ({
+        id: p.id,
+        label: p.label,
+        provider_type: p.provider_type,
+        client_id: p.client_id,
+        scope: p.scope,
+        enabled: !!p.enabled,
+        secret_configured: true, // 列表里不暴露 secret 是否配，只在详情里展示
+      })),
+      oauth_has_enabled_providers: enabledProviders.length > 0,
+      // IP 白名单
+      admin_ips: s.adminIps,
     });
   }
 
@@ -732,6 +762,25 @@ export async function handleAdminApi(
       // 允许清空
       patch.turnstile_sitekey_override = body.turnstile_sitekey_override.trim();
     }
+    // Turnstile Secret —— 如果 Modal 里传了新密码则加密存；空字符串则清掉；__keep__ 表示保留
+    if (typeof body.turnstile_secret === "string") {
+      const raw = body.turnstile_secret.trim();
+      if (raw === "") {
+        patch.turnstile_secret_cipher = "";
+      } else if (raw !== "__keep__") {
+        const cipher = await encryptSecret(raw, env.admin);
+        if (cipher) patch.turnstile_secret_cipher = cipher;
+      }
+      // raw === "__keep__" 或不传 → 保留原值不动
+    }
+    // OAuth2 总开关（具体 provider 配置由 /api/admin/oauth/providers CRUD 管理）
+    if (typeof body.oauth_enabled === "boolean") patch.oauth_enabled = body.oauth_enabled ? "1" : "0";
+
+    // 管理员 IP 白名单
+    if (typeof body.admin_ips === "string") {
+      patch.admin_ips = body.admin_ips.trim();
+    }
+
     await updateSettings(env, patch);
     return json({ ok: true });
   }
@@ -755,5 +804,395 @@ export async function handleAdminApi(
     return json({ ok: true });
   }
 
+  // ══════════════════════════════════════════════════════
+  // OAuth2 Provider CRUD —— 多 Provider 管理
+  //   GET    /api/admin/oauth/providers             列表
+  //   POST   /api/admin/oauth/providers             创建
+  //   GET    /api/admin/oauth/providers/:id          详情
+  //   PUT    /api/admin/oauth/providers/:id          更新
+  //   DELETE /api/admin/oauth/providers/:id          删除
+  //   POST   /api/admin/oauth/providers/:id/toggle   启用/禁用
+  // ══════════════════════════════════════════════════════
+
+  const oauthProvidersPath = "/api/admin/oauth/providers";
+  const m = path.match(/^\/api\/admin\/oauth\/providers\/([^/]+)(\/(toggle))?$/);
+
+  // GET /api/admin/oauth/providers —— 列表（返回不含 secret 的安全摘要）
+  if (path === oauthProvidersPath && method === "GET") {
+    const rows = await env.db
+      .prepare("SELECT id, label, provider_type, client_id, scope, custom_authorize_url, custom_token_url, custom_userinfo_url, custom_token_field, enabled, client_secret_cipher IS NOT NULL as has_secret, created_at, updated_at FROM oauth_providers ORDER BY updated_at DESC")
+      .all<{ id: string; label: string; provider_type: string; client_id: string; scope: string; custom_authorize_url: string; custom_token_url: string; custom_userinfo_url: string; custom_token_field: string; enabled: number; has_secret: number; created_at: number; updated_at: number }>();
+    return json({
+      providers: rows.results.map((p) => ({
+        id: p.id,
+        label: p.label,
+        provider_type: p.provider_type,
+        client_id: p.client_id,
+        scope: p.scope,
+        custom_authorize_url: p.custom_authorize_url,
+        custom_token_url: p.custom_token_url,
+        custom_userinfo_url: p.custom_userinfo_url,
+        custom_token_field: p.custom_token_field,
+        enabled: !!p.enabled,
+        secret_configured: !!p.has_secret,
+        created_at: p.created_at,
+        updated_at: p.updated_at,
+      })),
+    });
+  }
+
+  // POST /api/admin/oauth/providers —— 创建
+  if (path === oauthProvidersPath && method === "POST") {
+    const body = await readJson<{
+      label?: string;
+      provider_type?: string;
+      client_id?: string;
+      client_secret?: string;
+      scope?: string;
+      custom_authorize_url?: string;
+      custom_token_url?: string;
+      custom_userinfo_url?: string;
+      custom_token_field?: string;
+      enabled?: boolean;
+    }>(req);
+    const validTypes = ["github", "google", "microsoft", "discord", "custom"];
+    const providerType = (body.provider_type && validTypes.includes(body.provider_type))
+      ? body.provider_type
+      : "github";
+    const label = (body.label || providerType).trim().slice(0, 40);
+    const clientId = (body.client_id || "").trim();
+    if (!clientId) return json({ error: "client_id_required" }, 400);
+    const scope = (body.scope || "").trim() || "openid email profile";
+    const now = Date.now();
+    const id = randomId();
+    let secretCipher: string | null = null;
+    if (body.client_secret && body.client_secret.trim()) {
+      secretCipher = await encryptSecret(body.client_secret.trim(), env.admin);
+      if (!secretCipher) return json({ error: "secret_encrypt_failed" }, 500);
+    }
+    await env.db
+      .prepare(
+        `INSERT INTO oauth_providers(id, label, provider_type, client_id, client_secret_cipher, scope,
+            custom_authorize_url, custom_token_url, custom_userinfo_url, custom_token_field,
+            enabled, created_at, updated_at)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)`
+      )
+      .bind(
+        id,
+        label,
+        providerType,
+        clientId,
+        secretCipher,
+        scope,
+        (body.custom_authorize_url || "").trim(),
+        (body.custom_token_url || "").trim(),
+        (body.custom_userinfo_url || "").trim(),
+        (body.custom_token_field || "access_token").trim(),
+        body.enabled === false ? 0 : 1,
+        now,
+        now
+      )
+      .run();
+    return json({ ok: true, id });
+  }
+
+  // PUT /api/admin/oauth/providers/:id —— 更新
+  if (m && !m[3] && method === "PUT") {
+    const id = m[1];
+    const row = await env.db
+      .prepare("SELECT * FROM oauth_providers WHERE id = ?1")
+      .bind(id)
+      .first<Record<string, unknown>>();
+    if (!row) return json({ error: "not_found" }, 404);
+    const body = await readJson<{
+      label?: string;
+      provider_type?: string;
+      client_id?: string;
+      client_secret?: string; // 非空=更新；空字符串=清除；不传=保留
+      scope?: string;
+      custom_authorize_url?: string;
+      custom_token_url?: string;
+      custom_userinfo_url?: string;
+      custom_token_field?: string;
+      enabled?: boolean;
+    }>(req);
+
+    const now = Date.now();
+    const updates: string[] = ["updated_at = ?1"];
+    const values: unknown[] = [now];
+
+    if (typeof body.label === "string" && body.label.trim()) {
+      updates.push("label = ?" + (values.length + 1));
+      values.push(body.label.trim().slice(0, 40));
+    }
+    if (typeof body.provider_type === "string") {
+      const valid = ["github", "google", "microsoft", "discord", "custom"];
+      if (valid.includes(body.provider_type)) {
+        updates.push("provider_type = ?" + (values.length + 1));
+        values.push(body.provider_type);
+      }
+    }
+    if (typeof body.client_id === "string") {
+      updates.push("client_id = ?" + (values.length + 1));
+      values.push(body.client_id.trim());
+    }
+    if (typeof body.scope === "string") {
+      updates.push("scope = ?" + (values.length + 1));
+      values.push(body.scope.trim());
+    }
+    if (typeof body.custom_authorize_url === "string") {
+      updates.push("custom_authorize_url = ?" + (values.length + 1));
+      values.push(body.custom_authorize_url.trim());
+    }
+    if (typeof body.custom_token_url === "string") {
+      updates.push("custom_token_url = ?" + (values.length + 1));
+      values.push(body.custom_token_url.trim());
+    }
+    if (typeof body.custom_userinfo_url === "string") {
+      updates.push("custom_userinfo_url = ?" + (values.length + 1));
+      values.push(body.custom_userinfo_url.trim());
+    }
+    if (typeof body.custom_token_field === "string" && body.custom_token_field.trim()) {
+      updates.push("custom_token_field = ?" + (values.length + 1));
+      values.push(body.custom_token_field.trim());
+    }
+    if (typeof body.enabled === "boolean") {
+      updates.push("enabled = ?" + (values.length + 1));
+      values.push(body.enabled ? 1 : 0);
+    }
+    // Client secret：三种处理模式
+    if (typeof body.client_secret === "string") {
+      if (body.client_secret === "") {
+        // 显式清除
+        updates.push("client_secret_cipher = NULL");
+      } else if (body.client_secret.trim() !== "__keep__") {
+        // 更新为新密码
+        const cipher = await encryptSecret(body.client_secret.trim(), env.admin);
+        if (!cipher) return json({ error: "secret_encrypt_failed" }, 500);
+        updates.push("client_secret_cipher = ?" + (values.length + 1));
+        values.push(cipher);
+      }
+      // 其他情况（undefined 或 __keep__）：保留原值不动
+    }
+
+    values.push(id);
+    const sql = `UPDATE oauth_providers SET ${updates.join(", ")} WHERE id = ?${values.length}`;
+    await env.db.prepare(sql).bind(...values).run();
+    return json({ ok: true });
+  }
+
+  // DELETE /api/admin/oauth/providers/:id
+  if (m && !m[3] && method === "DELETE") {
+    const id = m[1];
+    await env.db.prepare("DELETE FROM oauth_providers WHERE id = ?1").bind(id).run();
+    return json({ ok: true });
+  }
+
+  // POST /api/admin/oauth/providers/:id/toggle —— 切换启用/禁用
+  if (m && m[3] === "toggle" && method === "POST") {
+    const id = m[1];
+    await env.db
+      .prepare("UPDATE oauth_providers SET enabled = 1 - enabled, updated_at = ?1 WHERE id = ?2")
+      .bind(Date.now(), id)
+      .run();
+    return json({ ok: true });
+  }
+
   return json({ error: "not_found" }, 404);
+
+  // ─═════════════════════════════════════════════════════════════════
+  // 激活码管理
+  // ─═════════════════════════════════════════════════════════════════
+
+  // POST /api/admin/codes/generate — 批量生成
+  // body: { plan_name, traffic_bytes, days_valid, count, quota_message?, batch_id?, notes? }
+  if (path === "/api/admin/codes/generate" && method === "POST") {
+    const body = await readJson<{
+      plan_name?: string;
+      traffic_bytes?: number;
+      days_valid?: number;
+      count?: number;
+      quota_message?: string;
+      batch_id?: string;
+      notes?: string;
+    }>(req);
+    const count = Math.max(1, Math.min(10000, Number(body.count) || 100));
+    const traffic = Math.max(0, Number(body.traffic_bytes) || 0);
+    const days = Math.max(0, Number(body.days_valid) || 0);
+    if (traffic === 0 && days === 0) {
+      return json({ error: msg(req, "至少设置流量额度或有效天数之一", "Set at least traffic OR days_valid") }, 400);
+    }
+
+    const batchIdRaw = (body.batch_id ?? "").trim();
+    const batchId = batchIdRaw ? batchIdRaw : makeBatchId();
+    const now = Date.now();
+    const ids = generateCodes(count);
+
+    // 用 batch 高效插入
+    const stmts = ids.map((code) =>
+      env.db
+        .prepare(
+          `INSERT INTO activation_codes
+           (id, code, plan_id, traffic_bytes, used_bytes, days_valid, quota_message, status, batch_id, notes, created_at, activated_at, expires_at)
+           VALUES(?1, ?2, ?3, ?4, 0, ?5, ?6, 'unused', ?7, ?8, ?9, NULL, NULL)`
+        )
+        .bind(
+          randomId(12),
+          code,
+          body.plan_name || null,
+          traffic,
+          days,
+          (typeof body.quota_message === "string" && body.quota_message.trim()) || null,
+          batchId,
+          (typeof body.notes === "string" && body.notes.trim()) || null,
+          now
+        )
+    );
+    await env.db.batch(stmts);
+    return json({ ok: true, batch_id: batchId, count, codes: ids.slice(0, 50) });
+  }
+
+  // GET /api/admin/codes — 列表（支持 ?status=&batch_id=&plan=&page=&export=1）
+  if (path === "/api/admin/codes" && method === "GET") {
+    const sp = new URL(req.url).searchParams;
+    const status = sp.get("status");
+    const batchId = sp.get("batch_id");
+    const plan = sp.get("plan");
+    const q = sp.get("q");
+    const exportCsv = sp.get("export") === "1";
+    const page = Math.max(1, Number(sp.get("page")) || 1);
+    const pageSize = Math.min(500, Math.max(10, Number(sp.get("size")) || 50));
+    const offset = (page - 1) * pageSize;
+
+    const where: string[] = [];
+    const binds: any[] = [];
+    if (status) { where.push("status = ?"); binds.push(status); }
+    if (batchId) { where.push("batch_id = ?"); binds.push(batchId); }
+    if (plan) { where.push("plan_id = ?"); binds.push(plan); }
+    if (q) { where.push("(code LIKE ? OR notes LIKE ?)"); binds.push(`%${q}%`, `%${q}%`); }
+
+    const whereSql = where.length ? "WHERE " + where.join(" AND ") : "";
+    const countSql = `SELECT COUNT(*) AS c FROM activation_codes ${whereSql}`;
+    const listSql = `SELECT * FROM activation_codes ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+
+    const total = (await env.db.prepare(countSql).bind(...binds).first<{ c: number }>())?.c ?? 0;
+    const results = (await env.db.prepare(listSql).bind(...binds, pageSize, offset).all()).results as any[];
+
+    const rows = results.map((r) => {
+      const status = formatCodeStatus(r);
+      return {
+        id: r.id,
+        code: r.code,
+        plan_id: r.plan_id,
+        batch_id: r.batch_id,
+        notes: r.notes,
+        traffic_bytes: r.traffic_bytes,
+        used_bytes: r.used_bytes,
+        days_valid: r.days_valid,
+        quota_message: r.quota_message,
+        status: r.status,
+        remaining: status?.remaining,
+        pct: status?.pct,
+        expired: status?.expired,
+        created_at: r.created_at,
+        activated_at: r.activated_at,
+        expires_at: r.expires_at,
+      };
+    });
+
+    if (exportCsv) {
+      const csvRows = [
+        "code,plan_id,batch_id,traffic_bytes,used_bytes,days_valid,status,quota_message,notes,created_at,activated_at,expires_at",
+      ];
+      const allResults = (await env.db.prepare(`SELECT * FROM activation_codes ${whereSql} ORDER BY created_at DESC`).bind(...binds).all()).results as any[];
+      for (const r of allResults) {
+        const esc = (v: any) => {
+          if (v == null) return "";
+          const s = String(v).replace(/"/g, '""');
+          return /[",\n]/.test(s) ? `"${s}"` : s;
+        };
+        csvRows.push(
+          [r.code, r.plan_id ?? "", r.batch_id ?? "", r.traffic_bytes, r.used_bytes, r.days_valid, r.status, esc(r.quota_message), esc(r.notes), r.created_at ?? "", r.activated_at ?? "", r.expires_at ?? ""].join(",")
+        );
+      }
+      const body = csvRows.join("\n");
+      const filename = `activation_codes_${new Date().toISOString().slice(0, 10)}.csv`;
+      return new Response(body, {
+        status: 200,
+        headers: {
+          "content-type": "text/csv;charset=utf-8",
+          "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+        },
+      });
+    }
+
+    return json({ rows, total, page, page_size: pageSize });
+  }
+
+  // POST /api/admin/codes/:id/revoke — 作废一个码
+  const codeRevokeMatch = /^\/api\/admin\/codes\/([^/]+)\/revoke$/.exec(path);
+  if (codeRevokeMatch && method === "POST") {
+    await env.db.prepare("UPDATE activation_codes SET status = 'revoked' WHERE id = ?1").bind(codeRevokeMatch![1]).run();
+    return json({ ok: true });
+  }
+
+  // POST /api/admin/codes/batch-revoke — 按 batch_id 整批作废
+  if (path === "/api/admin/codes/batch-revoke" && method === "POST") {
+    const body = await readJson<{ batch_id?: string; codes?: string[] }>(req);
+    if (body.batch_id) {
+      const r = await env.db.prepare("UPDATE activation_codes SET status = 'revoked' WHERE batch_id = ?1 AND status != 'revoked'").bind(body.batch_id).run();
+      return json({ ok: true, updated: r.meta.changes ?? 0 });
+    }
+    const codes: string[] = (body.codes ?? []) as string[];
+    if (codes.length > 0) {
+      const stmts = codes.map((c) =>
+        env.db.prepare("UPDATE activation_codes SET status = 'revoked' WHERE code = ?1").bind(c)
+      );
+      await env.db.batch(stmts);
+      return json({ ok: true, count: codes.length });
+    }
+    return json({ error: msg(req, "缺少 batch_id 或 codes", "Missing batch_id or codes") }, 400);
+  }
+
+  // GET /api/admin/codes/batches — 列出所有 batch_id（用于过滤 UI）
+  if (path === "/api/admin/codes/batches" && method === "GET") {
+    const rows = (await env.db.prepare(
+      "SELECT batch_id, COUNT(*) AS n FROM activation_codes WHERE batch_id IS NOT NULL GROUP BY batch_id ORDER BY MAX(created_at) DESC"
+    ).all()).results as any[];
+    return json({ batches: rows.map((r) => ({ batch_id: r.batch_id, count: r.n })) });
+  }
+
+  // GET /api/admin/codes/usage?batch=&plan= — 流量用量汇总
+  if (path === "/api/admin/codes/usage" && method === "GET") {
+    const sp = new URL(req.url).searchParams;
+    const where: string[] = [];
+    const binds: any[] = [];
+    if (sp.get("batch")) { where.push("batch_id = ?"); binds.push(sp.get("batch")); }
+    if (sp.get("plan")) { where.push("plan_id = ?"); binds.push(sp.get("plan")); }
+    const whereSql = where.length ? "WHERE " + where.join(" AND ") : "";
+
+    const summary = await env.db.prepare(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN status = 'unused' THEN 1 ELSE 0 END) AS unused,
+         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
+         SUM(CASE WHEN status = 'revoked' THEN 1 ELSE 0 END) AS revoked,
+         SUM(CASE WHEN status = 'expired' THEN 1 ELSE 0 END) AS expired,
+         SUM(CASE WHEN status = 'exhausted' THEN 1 ELSE 0 END) AS exhausted,
+         SUM(used_bytes) AS used_bytes,
+         SUM(traffic_bytes) AS total_bytes
+       FROM activation_codes ${whereSql}`
+    ).bind(...binds).first() as any;
+
+    // 各 batch 汇总
+    const batches = where.length ? [] : (await env.db.prepare(
+      `SELECT batch_id, COUNT(*) AS n, SUM(used_bytes) AS used_bytes, SUM(traffic_bytes) AS total_bytes
+       FROM activation_codes
+       WHERE batch_id IS NOT NULL
+       GROUP BY batch_id
+       ORDER BY MAX(created_at) DESC`
+    ).all()).results;
+
+    return json({ summary, batches });
+  }
 }

@@ -351,6 +351,8 @@ const I18N = {
     validity: '有效期', perm: '永久有效', h1: '1 小时', d1: '1 天', d7: '7 天', d30: '30 天',
     sharePassword: '访问密码（可选）', sharePasswordPh: '留空则无需密码',
     sharePasswordHint: '设置后，访客需输入密码才能下载。',
+    downloadName: '下载时显示名（可选）', downloadNamePh: '留空则用原始文件名',
+    downloadNameHint: '访客下载时看到的文件名，隐藏真实路径中的敏感信息。',
     maxDownloadsLabel: '下载次数上限（留空或 0 = 不限）', unlimitedPlaceholder: '不限',
     maxTip: '达到上限后链接自动失效。单 IP 重复下载限制由「设置」统一控制。',
     generate: '生成链接', shareCreated: '分享链接已创建 ✨', shareCreatedSub: '复制下面的链接发给需要的人',
@@ -422,6 +424,13 @@ const I18N = {
     login2faRecoveryPh: '16 位恢复码（空格可选）',
     login2faRecoveryHint: '如果 Authenticator 丢失，可以输入恢复码登录并自动关闭 2FA',
     login2faRecoveryOk: '恢复码验证成功，2FA 已自动重置',
+    // 管理员 IP 白名单
+    ipWhitelist: '管理员 IP 白名单',
+    ipWhitelistD: '限制哪些 IP 可以访问 /admin 后台。留空 = 不限制；配置后，只有白名单 IP 能登录，且这些 IP 的下载不受流量限额约束。',
+    ipWhitelistPh: '每行一个，或用逗号分隔。支持精确 IP（1.2.3.4）和 CIDR（10.0.0.0/8）',
+    ipWhitelistOn: '已启用',
+    ipWhitelistOff: '未启用（任何 IP 都能访问 /admin）',
+    ipWhitelistHint: '格式：每行一个条目 或 用逗号分隔。例：192.168.1.1, 10.0.0.0/8, 203.0.113.0/24',
     // 2FA 设置
     twofa: '两步验证 (TOTP)',
     twofaD: '使用 Google Authenticator / Microsoft Authenticator 等应用生成验证码',
@@ -457,7 +466,15 @@ const I18N = {
     tsThresholdHelp: '0 = 每次都弹；N = 该 IP 当天访问分享页超过 N 次后开始弹',
     tsSitekeyOverride: 'SiteKey 覆盖（可选）',
     tsSitekeyOverrideHelp: '如果你没在 Cloudflare Secret 里配 turnstile_sitekey，可在此填入',
-    tsSecretHint: 'Secret 必须在 Cloudflare Secret 里配置 turnstile_secret 才能生效',
+    tsSecretOverride: 'Turnstile Secret',
+    tsSecretPlaceholder: '填入 Secret Key（与 SiteKey 同一面板获取）',
+    tsSecretKeep: '留空不改动',
+    tsSecretInCloudflare: '已在 Cloudflare Secret 中（优先使用）',
+    tsSecretInDatabase: '已在数据库中加密存储',
+    tsInCloudflare: '已在 Cloudflare Secret 中',
+    tsInDatabase: '已在数据库中配置',
+    tsMissingBoth: 'Cloudflare Secret 和数据库都未配置，需要填写',
+    tsSecretHint: '可以填在这里（加密存入数据库），也可以在 Cloudflare Secret 里配 turnstile_secret（优先）',
     tsSecretOk: '已配置 ✅',
     tsSecretMissing: '未配置 ❌',
     tsSitekeyCloudflareOk: 'SiteKey 已在 Cloudflare Secret 配置 ✅',
@@ -465,6 +482,100 @@ const I18N = {
     tsResetVisits: '重置今日访问计数',
     tsResetVisitsD: '清空所有 IP 今日访问计数，让它们重新从头开始计数。',
     tsVisitsReset: '访问计数已重置',
+    // OAuth2
+    oauthGroupTitle: '🔐 OAuth2 下载登录',
+    oauthGroupD: '管理员启用后，访客必须通过第三方账号登录才能下载。所有配置（client_id / secret）均在 D1 数据库中加密存储，不会进 Cloudflare Secret。',
+    oauthEnable: '启用 OAuth2',
+    oauthProvider: 'OAuth2 服务商',
+    oauthClientId: 'Client ID',
+    oauthClientSecret: 'Client Secret',
+    oauthClientSecretHelp: '在服务商后台申请，会用 admin 密钥加密存入数据库',
+    oauthSecretConfigured: '已配置',
+    oauthSecretNotConfigured: '未配置',
+    oauthSecretClear: '清除 Secret',
+    oauthScope: 'Scope（授权范围）',
+    oauthCustomUrls: '自定义 Provider URL（只有选了 Custom 才生效）',
+    oauthCustomAuthorize: '授权端点 (Authorization URL)',
+    oauthCustomToken: '令牌端点 (Token URL)',
+    oauthCustomUserinfo: '用户信息端点 (Userinfo URL)',
+    oauthCustomTokenField: 'Token 返回字段名',
+    oauthCallbackUrl: '回调地址（复制到服务商后台）',
+    oauthCallbackHint: '在服务商 OAuth2 设置中，把此 URL 填入 Redirect URI / Callback URL 字段',
+    oauthTest: '测试配置',
+    oauthTestOk: 'OAuth2 配置有效',
+    oauthTestFail: 'OAuth2 配置不完整或有错误',
+    // 新增多 Provider 相关
+    configureTurnstile: '配置 Turnstile',
+    oauthNoProviders: '还没有配置任何 OAuth2 Provider',
+    oauthEnabledN: '已启用 {n} 个 Provider',
+    oauthNoEnabled: '总开关已打开，但没有启用任何 Provider',
+    oauthDisabled: '未启用',
+    oauthConfigure: '⚙️ 配置',
+    oauthEnable: '启用',
+    oauthDisable: '禁用',
+    oauthAddProvider: '添加 Provider',
+    oauthEditTitle: '编辑 OAuth2 Provider',
+    oauthAddTitle: '添加 OAuth2 Provider',
+    oauthLabel: '显示名称',
+    oauthKeepSecret: '保持现有 Secret 不变',
+    confirmDeleteTitle: '确认删除',
+    confirmOAuthDeleteD: '删除后此 Provider 的配置将永久删除。已生成的 OAuth2 会话不受影响，但新登录请求将无法使用此 Provider。确定删除吗？',
+    custom: '自定义',
+    cancel: '取消',
+    // 激活码
+    tabCodes: '激活码',
+    codesTitle: '🎟️ 激活码管理',
+    codesSub: '批量生成带独立流量额度的激活码，用户使用激活码下载不受全局流量限制。额度耗尽或过期自动停用。',
+    codesUsageTitle: '用量概览',
+    codesGenerateTitle: '批量生成激活码',
+    codesBatchId: '批次标识（自动生成）',
+    codesPlanName: '分类/套餐名（可选）',
+    codesCount: '生成数量',
+    codesTraffic: '总流量额度 (GB，0=纯时效码)',
+    codesDays: '有效天数 (0=不限)',
+    codesQuotaMsg: '耗尽时自定义提示（可选）',
+    codesNotes: '备注（可选）',
+    codesGenerate: '生成激活码',
+    codesGeneratedN: '成功生成 {n} 个激活码',
+    codesGeneratedPreview: '前 50 个激活码（其余请用 CSV 导出完整列表）',
+    codesExportCsv: '导出 CSV',
+    codesListTitle: '激活码列表',
+    codesFilterStatus: '状态',
+    codesFilterBatch: '批次',
+    codesFilterPlan: '分类',
+    codesFilterQ: '搜索码/备注',
+    codesFilterAll: '全部',
+    codesColCode: '激活码',
+    codesColPlan: '分类',
+    codesColBatch: '批次',
+    codesColTraffic: '流量额度',
+    codesColUsed: '已用',
+    codesColDays: '有效天数',
+    codesColStatus: '状态',
+    codesColCreated: '创建时间',
+    codesColActivated: '首次使用',
+    codesColExpires: '过期时间',
+    codesRevokeOne: '作废',
+    codesRevokeBatch: '按批次作废',
+    codesRevokeCodes: '按码作废',
+    codesConfirmRevokeT: '确认作废',
+    codesConfirmRevokeD: '作废后该激活码将无法继续使用，已使用的流量记录保留。',
+    codesBatchRevokeOk: '已作废 {n} 个激活码',
+    codesStatusUnused: '未使用',
+    codesStatusActive: '使用中',
+    codesStatusExpired: '已过期',
+    codesStatusExhausted: '已耗尽',
+    codesStatusRevoked: '已作废',
+    codesRemainingInfinite: '无限',
+    codesUnlimited: '不限',
+    codesNoCodes: '暂无激活码',
+    codesQueryRemain: '查询剩余流量',
+    codesQueryRemainPh: '输入激活码查询剩余额度',
+    codesQueryRemainBtn: '查询',
+    codesQueryNotFound: '激活码不存在',
+    codesQueryResult: '剩余 {remaining} / 总 {total}',
+    codesQueryResultInfinite: '剩余 ∞ (无限额度)',
+    codesPerBatch: '批次 {id}',
   },
   en: {
     docTitle: '{site} · Admin Console',
@@ -500,6 +611,8 @@ const I18N = {
     validity: 'Validity', perm: 'Forever', h1: '1 hour', d1: '1 day', d7: '7 days', d30: '30 days',
     sharePassword: 'Access password (optional)', sharePasswordPh: 'Leave blank for no password',
     sharePasswordHint: 'When set, visitors must enter a password to download.',
+    downloadName: 'Display name on download (optional)', downloadNamePh: 'Leave blank to use original filename',
+    downloadNameHint: 'The filename visitors see when they download. Useful for hiding sensitive info in original paths.',
     maxDownloadsLabel: 'Max downloads (empty or 0 = unlimited)', unlimitedPlaceholder: 'Unlimited',
     maxTip: 'The link expires when the cap is reached. Per-IP duplicate limits are controlled in Settings.',
     generate: 'Generate Link', shareCreated: 'Share link created ✨', shareCreatedSub: 'Copy the link below and share it',
@@ -571,6 +684,13 @@ const I18N = {
     login2faRecoveryPh: '16-char recovery code (spaces optional)',
     login2faRecoveryHint: 'If your Authenticator is lost, enter a recovery code to log in and disable 2FA automatically.',
     login2faRecoveryOk: 'Recovery code accepted. 2FA has been reset.',
+    // Admin IP whitelist
+    ipWhitelist: 'Admin IP Whitelist',
+    ipWhitelistD: 'Restricts which IPs can access /admin. Empty = no restriction. When set, only whitelisted IPs can log in, and their downloads are exempt from traffic quota.',
+    ipWhitelistPh: 'One per line, or comma-separated. Supports exact IP (1.2.3.4) and CIDR (10.0.0.0/8)',
+    ipWhitelistOn: 'Enabled',
+    ipWhitelistOff: 'Not enabled (any IP can access /admin)',
+    ipWhitelistHint: 'Format: one per line OR comma-separated. e.g. 192.168.1.1, 10.0.0.0/8, 203.0.113.0/24',
     // 2FA settings
     twofa: 'Two-Factor Authentication (TOTP)',
     twofaD: 'Use Google Authenticator / Microsoft Authenticator to generate one-time codes',
@@ -606,7 +726,15 @@ const I18N = {
     tsThresholdHelp: '0 = always show; N = show after this IP visits N times today',
     tsSitekeyOverride: 'SiteKey override (optional)',
     tsSitekeyOverrideHelp: 'Only needed if you did NOT set turnstile_sitekey as a Cloudflare Secret',
-    tsSecretHint: 'Turnstile requires turnstile_secret to be set as a Cloudflare Secret',
+    tsSecretOverride: 'Turnstile Secret',
+    tsSecretPlaceholder: 'Enter Secret Key (same dashboard as SiteKey)',
+    tsSecretKeep: 'Leave blank to keep unchanged',
+    tsSecretInCloudflare: 'Set in Cloudflare Secret (takes priority)',
+    tsSecretInDatabase: 'Stored encrypted in the database',
+    tsInCloudflare: 'set in Cloudflare Secret',
+    tsInDatabase: 'set in database',
+    tsMissingBoth: 'Missing in both Cloudflare Secret and database — please enter below',
+    tsSecretHint: 'Can be entered here (encrypted) or set as Cloudflare Secret turnstile_secret (takes priority)',
     tsSecretOk: 'Configured ✅',
     tsSecretMissing: 'Not configured ❌',
     tsSitekeyCloudflareOk: 'SiteKey set in Cloudflare Secret ✅',
@@ -614,6 +742,98 @@ const I18N = {
     tsResetVisits: 'Reset visit counters',
     tsResetVisitsD: 'Clear today\'s per-IP visit counts so everyone starts fresh.',
     tsVisitsReset: 'Visit counters cleared',
+    // OAuth2
+    oauthGroupTitle: '🔐 OAuth2 Login Required for Downloads',
+    oauthGroupD: 'When enabled, visitors must log in through a third-party OAuth2 provider before downloading. Client credentials are encrypted in the D1 database — no Cloudflare Secret needed.',
+    oauthEnable: 'Enable OAuth2',
+    oauthProvider: 'OAuth2 Provider',
+    oauthClientId: 'Client ID',
+    oauthClientSecret: 'Client Secret',
+    oauthClientSecretHelp: 'Issued by the provider dashboard; stored encrypted using the admin key',
+    oauthSecretConfigured: 'Configured',
+    oauthSecretNotConfigured: 'Not configured',
+    oauthSecretClear: 'Clear Secret',
+    oauthScope: 'Scope',
+    oauthCustomUrls: 'Custom Provider URLs (only when Custom is selected)',
+    oauthCustomAuthorize: 'Authorization URL',
+    oauthCustomToken: 'Token URL',
+    oauthCustomUserinfo: 'Userinfo URL',
+    oauthCustomTokenField: 'Token Field Name',
+    oauthCallbackUrl: 'Callback URL (copy to provider dashboard)',
+    oauthCallbackHint: 'Paste this URL into the Redirect URI / Callback URL field in your OAuth2 provider settings.',
+    oauthTest: 'Test Configuration',
+    oauthTestOk: 'OAuth2 configuration looks valid',
+    oauthTestFail: 'OAuth2 is incomplete or has errors',
+    configureTurnstile: 'Configure Turnstile',
+    oauthNoProviders: 'No OAuth2 providers configured yet',
+    oauthEnabledN: '{n} provider(s) enabled',
+    oauthNoEnabled: 'Master switch is ON but no provider is enabled',
+    oauthDisabled: 'Disabled',
+    oauthConfigure: '⚙️ Configure',
+    oauthEnable: 'Enable',
+    oauthDisable: 'Disable',
+    oauthAddProvider: 'Add Provider',
+    oauthEditTitle: 'Edit OAuth2 Provider',
+    oauthAddTitle: 'Add OAuth2 Provider',
+    oauthLabel: 'Display Name',
+    oauthKeepSecret: 'Keep existing secret unchanged',
+    confirmDeleteTitle: 'Confirm Delete',
+    confirmOAuthDeleteD: 'This provider config will be permanently deleted. Existing OAuth sessions remain valid, but new login requests cannot use this provider. Are you sure?',
+    custom: 'Custom',
+    // Activation Codes
+    tabCodes: 'Codes',
+    codesTitle: '🎟️ Activation Codes',
+    codesSub: 'Generate activation codes with independent traffic quotas. Users using codes bypass the global traffic limit. Codes auto-stop when quota or time expires.',
+    codesUsageTitle: 'Usage Summary',
+    codesGenerateTitle: 'Batch Generate Codes',
+    codesBatchId: 'Batch ID (auto-generated)',
+    codesPlanName: 'Plan / Category (optional)',
+    codesCount: 'Count',
+    codesTraffic: 'Total traffic quota (GB, 0 = time-only)',
+    codesDays: 'Valid days (0 = unlimited)',
+    codesQuotaMsg: 'Custom exhaustion message (optional)',
+    codesNotes: 'Notes (optional)',
+    codesGenerate: 'Generate Codes',
+    codesGeneratedN: 'Generated {n} codes',
+    codesGeneratedPreview: 'First 50 codes (use CSV export for the full list)',
+    codesExportCsv: 'Export CSV',
+    codesListTitle: 'Codes List',
+    codesFilterStatus: 'Status',
+    codesFilterBatch: 'Batch',
+    codesFilterPlan: 'Plan',
+    codesFilterQ: 'Search code / notes',
+    codesFilterAll: 'All',
+    codesColCode: 'Code',
+    codesColPlan: 'Plan',
+    codesColBatch: 'Batch',
+    codesColTraffic: 'Quota',
+    codesColUsed: 'Used',
+    codesColDays: 'Days',
+    codesColStatus: 'Status',
+    codesColCreated: 'Created',
+    codesColActivated: 'First Used',
+    codesColExpires: 'Expires',
+    codesRevokeOne: 'Revoke',
+    codesRevokeBatch: 'Revoke by Batch',
+    codesRevokeCodes: 'Revoke by Codes',
+    codesConfirmRevokeT: 'Confirm Revoke',
+    codesConfirmRevokeD: 'After revocation, this code can no longer be used. Traffic history is preserved.',
+    codesBatchRevokeOk: '{n} codes revoked',
+    codesStatusUnused: 'Unused',
+    codesStatusActive: 'Active',
+    codesStatusExpired: 'Expired',
+    codesStatusExhausted: 'Exhausted',
+    codesStatusRevoked: 'Revoked',
+    codesRemainingInfinite: '∞',
+    codesUnlimited: '∞',
+    codesNoCodes: 'No activation codes yet',
+    codesQueryRemain: 'Check Remaining',
+    codesQueryRemainPh: 'Enter a code to check remaining quota',
+    codesQueryRemainBtn: 'Check',
+    codesQueryNotFound: 'Code not found',
+    codesQueryResult: 'Remaining {remaining} / Total {total}',
+    codesQueryResultInfinite: 'Remaining ∞ (unlimited)',
+    codesPerBatch: 'Batch {id}',
   }
 };
 
@@ -884,6 +1104,7 @@ async function showApp(){
       <button data-tab="shares">${esc(t('tabShares'))}</button>
       <button data-tab="logs">${esc(t('tabLogs'))}</button>
       <button data-tab="bans">${esc(t('tabBans'))}</button>
+      <button data-tab="codes">${esc(t('tabCodes'))}</button>
       <button data-tab="security">${esc(t('tabSecurity'))}</button>
       <button data-tab="settings">${esc(t('tabSettings'))}</button>
     </div>
@@ -901,7 +1122,7 @@ function switchTab(tab){
   $$('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   const v = $('#view');
   v.innerHTML = '<div class="spin"></div>';
-  ({ overview: loadOverview, files: loadFiles, shares: loadShares, logs: loadLogs, bans: loadBans, security: loadSecurity, settings: loadSettings })[tab]().catch(e => {
+  ({ overview: loadOverview, files: loadFiles, shares: loadShares, logs: loadLogs, bans: loadBans, codes: loadCodes, security: loadSecurity, settings: loadSettings })[tab]().catch(e => {
     v.innerHTML = `<div class="glass section"><div class="empty"><div class="icon">⚠️</div>${esc(e.message === 'unauthorized' ? t('loadingErr') : e.message)}</div></div>`;
   });
 }
@@ -1079,6 +1300,11 @@ function openShareModal(fileId){
       <div class="tip">${esc(t('sharePasswordHint'))}</div>
     </div>
     <div class="field">
+      <label>${esc(t('downloadName'))}</label>
+      <input type="text" id="sh-dlname" placeholder="${esc(t('downloadNamePh'))}">
+      <div class="tip">${esc(t('downloadNameHint'))}</div>
+    </div>
+    <div class="field">
       <label>${esc(t('maxDownloadsLabel'))}</label>
       <input type="number" id="sh-max" min="0" placeholder="${esc(t('unlimitedPlaceholder'))}">
       <div class="tip">${esc(t('maxTip'))}</div>
@@ -1092,8 +1318,9 @@ function openShareModal(fileId){
     const exp = Number($('#sh-exp').value) || null;
     const max = Number($('#sh-max').value) || null;
     const password = $('#sh-pwd').value.trim() || null;
+    const download_name = $('#sh-dlname').value.trim() || null;
     try{
-      const r = await api('/api/admin/shares', { method:'POST', body: JSON.stringify({ file_id: fileId, expires_hours: exp, max_downloads: max, password }) });
+      const r = await api('/api/admin/shares', { method:'POST', body: JSON.stringify({ file_id: fileId, expires_hours: exp, max_downloads: max, password, download_name }) });
       const url = location.origin + r.url;
       openModal(`
         <h3>${esc(t('shareCreated'))}</h3>
@@ -1128,7 +1355,7 @@ async function loadShares(){
           const pw = s.has_password ? (s.password_plain || '') : null;
           return `
           <tr>
-            <td class="name-cell">${ficon(s.file_name)} ${esc(s.file_name)}</td>
+            <td class="name-cell">${ficon(s.file_name)} ${esc(s.file_name)}${s.download_name && s.download_name !== s.file_name ? `<div style="font-size:11px;color:#6ee7b7;margin-top:2px">↳ ${esc(s.download_name)}</div>` : ''}</td>
             <td class="mono">${s.has_password?'🔒 ':''}<a href="/s/${s.id}" target="_blank" style="color:#a5d8ff;text-decoration:none">/s/${s.id}</a></td>
             <td class="mono">${pw ? `<span id="pw-${s.id}" style="font-family:ui-monospace,'SF Mono',monospace;color:#fde68a">••••••</span>
               <button class="btn sm" data-pw="${s.id}" data-val="${esc(pw)}" style="padding:2px 8px;font-size:11px;margin-left:4px">👁</button>
@@ -1212,8 +1439,8 @@ async function loadLogs(){
     </div>`;
   let timer;
   $('#log-q').oninput = e => { clearTimeout(timer); timer = setTimeout(() => { logsQuery = e.target.value.trim(); logsPage = 1; loadLogs(); }, 350); };
-  $('#pg-prev').onclick = () => { logsPage--; loadLogs(); };
-  $('#pg-next').onclick = () => { logsPage++; loadLogs(); };
+  $('#pg-prev')?.addEventListener('click', () => { logsPage--; loadLogs(); });
+  $('#pg-next')?.addEventListener('click', () => { logsPage++; loadLogs(); });
   $('#clear-30').onclick = async () => {
     if(!(await confirmDialog(t('confirmClear30T'), t('confirmClear30D')))) return;
     const r = await api('/api/admin/logs?mode=older&days=30', { method:'DELETE' });
@@ -1345,8 +1572,8 @@ async function loadSecurity(){
   $('#sec-result').onchange = e => { secResult = e.target.value; secPage = 1; loadSecurity(); };
   let secTimer;
   $('#sec-q').oninput = e => { clearTimeout(secTimer); secTimer = setTimeout(() => { secQuery = e.target.value.trim(); secPage = 1; loadSecurity(); }, 350); };
-  $('#sec-pg-prev').onclick = () => { secPage--; loadSecurity(); };
-  $('#sec-pg-next').onclick = () => { secPage++; loadSecurity(); };
+  $('#sec-pg-prev')?.addEventListener('click', () => { secPage--; loadSecurity(); });
+  $('#sec-pg-next')?.addEventListener('click', () => { secPage++; loadSecurity(); });
   $('#sec-clear-30').onclick = async () => {
     if(!(await confirmDialog(t('secConfirmClear30T'), t('secConfirmClear30D'), false))) return;
     const r = await api('/api/admin/login-logs?mode=older&days=30', { method:'DELETE' });
@@ -1357,6 +1584,274 @@ async function loadSecurity(){
     const r = await api('/api/admin/login-logs?mode=all', { method:'DELETE' });
     toast(t('secClearedN', {n: r.deleted})); loadSecurity();
   };
+}
+
+/* ═══════════ 激活码管理 ═══════════ */
+let codesPage = 1;
+let codesStatus = '';
+let codesBatchId = '';
+let codesPlan = '';
+let codesQ = '';
+
+async function loadCodes(){
+  const [usage, batches] = await Promise.all([
+    api('/api/admin/codes/usage'),
+    api('/api/admin/codes/batches').catch(() => ({batches: []})),
+  ]);
+  const sum = usage.summary || {};
+  const batchesList = usage.batches || [];
+  const batchOptions = (batches.batches || batchesList.map(b => ({batch_id: b.batch_id, count: b.n || b.count})));
+  const plans = [...new Set(batchOptions.map(b => b.batch_id))];
+
+  const totalCodes = sum.total || 0;
+  const usedCodes = (sum.active||0) + (sum.exhausted||0) + (sum.expired||0);
+  const totalTrafficGB = ((sum.total_bytes||0) / 1024 / 1024 / 1024).toFixed(2);
+  const usedTrafficGB = ((sum.used_bytes||0) / 1024 / 1024 / 1024).toFixed(2);
+  const trafficPct = sum.total_bytes > 0 ? Math.round((sum.used_bytes / sum.total_bytes) * 100) : 0;
+
+  const v = $('#view');
+  v.innerHTML = `
+    <div class="glass section">
+      <div class="section-title">
+        <h2>🎟️ ${esc(t('codesTitle'))}</h2>
+      </div>
+      <div class="sub" style="color:var(--text-2);font-size:13px;margin-bottom:14px">${esc(t('codesSub'))}</div>
+
+      <!-- 用量概览 -->
+      <div class="stats-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:18px">
+        <div class="stat-box" style="background:rgba(255,255,255,.06);border-radius:14px;padding:14px;border:1px solid var(--stroke)">
+          <div style="color:var(--text-3);font-size:12px">${esc(t('codesColCode'))} / Total</div>
+          <div style="font-size:22px;font-weight:700;margin-top:4px">${totalCodes}</div>
+        </div>
+        <div class="stat-box" style="background:rgba(255,255,255,.06);border-radius:14px;padding:14px;border:1px solid var(--stroke)">
+          <div style="color:var(--text-3);font-size:12px">${esc(t('codesStatusUnused'))}</div>
+          <div style="font-size:22px;font-weight:700;margin-top:4px;color:#34d399">${sum.unused||0}</div>
+        </div>
+        <div class="stat-box" style="background:rgba(255,255,255,.06);border-radius:14px;padding:14px;border:1px solid var(--stroke)">
+          <div style="color:var(--text-3);font-size:12px">${esc(t('codesStatusActive'))}</div>
+          <div style="font-size:22px;font-weight:700;margin-top:4px;color:#60a5fa">${sum.active||0}</div>
+        </div>
+        <div class="stat-box" style="background:rgba(255,255,255,.06);border-radius:14px;padding:14px;border:1px solid var(--stroke)">
+          <div style="color:var(--text-3);font-size:12px">${esc(t('codesColTraffic'))}</div>
+          <div style="font-size:18px;font-weight:700;margin-top:4px">${usedTrafficGB} / ${totalTrafficGB} GB</div>
+          <div style="margin-top:6px;height:4px;background:rgba(255,255,255,.15);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:${trafficPct}%;background:linear-gradient(90deg,#34d399,#60a5fa);border-radius:2px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 批量生成 -->
+    <div class="glass section">
+      <div class="section-title">
+        <h2>⚡ ${esc(t('codesGenerateTitle'))}</h2>
+      </div>
+      <div id="codes-gen-form" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">
+        <div class="field" style="margin:0">
+          <label>${esc(t('codesCount'))}</label>
+          <input type="number" id="cg-count" min="1" max="10000" value="100">
+        </div>
+        <div class="field" style="margin:0">
+          <label>${esc(t('codesTraffic'))}</label>
+          <input type="number" id="cg-traffic" min="0" value="10">
+        </div>
+        <div class="field" style="margin:0">
+          <label>${esc(t('codesDays'))}</label>
+          <input type="number" id="cg-days" min="0" value="30">
+        </div>
+        <div class="field" style="margin:0">
+          <label>${esc(t('codesPlanName'))}</label>
+          <input type="text" id="cg-plan" placeholder="Pro / Basic / ...">
+        </div>
+        <div class="field" style="margin:0">
+          <label>${esc(t('codesNotes'))}</label>
+          <input type="text" id="cg-notes" placeholder="">
+        </div>
+        <div class="field" style="margin:0">
+          <label>${esc(t('codesQuotaMsg'))}</label>
+          <input type="text" id="cg-msg" placeholder="">
+        </div>
+      </div>
+      <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn primary" id="cg-do">${esc(t('codesGenerate'))}</button>
+      </div>
+      <div id="cg-preview" style="margin-top:14px"></div>
+    </div>
+
+    <!-- 列表 -->
+    <div class="glass section">
+      <div class="section-title">
+        <h2>📋 ${esc(t('codesListTitle'))} <span id="codes-total-count" style="color:var(--text-3);font-weight:400;font-size:13px"></span></h2>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <select id="cf-status" style="padding:8px 12px;border-radius:10px;background:rgba(255,255,255,.09);border:1px solid var(--stroke-strong);color:#fff;font-size:13px;font-family:inherit;outline:none">
+            <option value="">${esc(t('codesFilterAll'))} ${esc(t('codesFilterStatus'))}</option>
+            <option value="unused">${esc(t('codesStatusUnused'))}</option>
+            <option value="active">${esc(t('codesStatusActive'))}</option>
+            <option value="expired">${esc(t('codesStatusExpired'))}</option>
+            <option value="exhausted">${esc(t('codesStatusExhausted'))}</option>
+            <option value="revoked">${esc(t('codesStatusRevoked'))}</option>
+          </select>
+          <select id="cf-batch" style="padding:8px 12px;border-radius:10px;background:rgba(255,255,255,.09);border:1px solid var(--stroke-strong);color:#fff;font-size:13px;font-family:inherit;outline:none">
+            <option value="">${esc(t('codesFilterAll'))} ${esc(t('codesFilterBatch'))}</option>
+            ${batchOptions.map(b => `<option value="${esc(b.batch_id)}">${esc(b.batch_id)} (${b.count||b.n||0})</option>`).join('')}
+          </select>
+          <input type="text" id="cf-q" placeholder="${esc(t('codesFilterQ'))}" value="${esc(codesQ)}" style="padding:8px 12px;border-radius:10px;background:rgba(255,255,255,.09);border:1px solid var(--stroke-strong);color:#fff;font-size:13px;font-family:inherit;outline:none;width:180px">
+          <button class="btn sm" id="cf-export">${esc(t('codesExportCsv'))}</button>
+          <button class="btn sm danger" id="cf-revoke-batch">${esc(t('codesRevokeBatch'))}</button>
+        </div>
+      </div>
+      <div id="codes-table"></div>
+      <div id="codes-pg" style="margin-top:14px;display:flex;justify-content:center;gap:10px"></div>
+    </div>
+  `;
+
+  // 生成按钮
+  $('#cg-do').onclick = async () => {
+    const count = Math.max(1, Math.min(10000, Number($('#cg-count').value) || 100));
+    const traffic = Math.max(0, Number($('#cg-traffic').value) || 0);
+    const days = Math.max(0, Number($('#cg-days').value) || 0);
+    if (traffic === 0 && days === 0) { toast('Set at least traffic OR days', 'err'); return; }
+    try {
+      const r = await api('/api/admin/codes/generate', { method:'POST', body: JSON.stringify({
+        count, traffic_bytes: traffic * 1024 * 1024 * 1024, days_valid: days,
+        plan_name: $('#cg-plan').value.trim() || undefined,
+        quota_message: $('#cg-msg').value.trim() || undefined,
+        notes: $('#cg-notes').value.trim() || undefined,
+      })});
+      toast(t('codesGeneratedN', {n: r.count}));
+      const preview = r.codes || [];
+      $('#cg-preview').innerHTML = `
+        <div style="color:var(--text-3);font-size:12px;margin-bottom:6px">${esc(t('codesGeneratedPreview'))}</div>
+        <div style="background:rgba(0,0,0,.3);border-radius:12px;padding:12px;font-family:ui-monospace,'SF Mono',monospace;font-size:12px;color:#fde68a;line-height:1.7;max-height:200px;overflow:auto">
+          ${preview.map(c => `<div>${esc(c)}</div>`).join('')}
+        </div>
+      `;
+      codesPage = 1;
+      loadCodesList();
+    } catch(err) { toast(err.message, 'err'); }
+  };
+
+  // 过滤器
+  $('#cf-status').onchange = () => { codesStatus = $('#cf-status').value; codesPage = 1; loadCodesList(); };
+  $('#cf-batch').onchange = () => { codesBatchId = $('#cf-batch').value; codesPage = 1; loadCodesList(); };
+  $('#cf-q').addEventListener('input', (e) => {
+    clearTimeout(window.__codesQ_t);
+    window.__codesQ_t = setTimeout(() => { codesQ = e.target.value.trim(); codesPage = 1; loadCodesList(); }, 300);
+  });
+
+  // CSV 导出
+  $('#cf-export').onclick = () => {
+    const sp = new URLSearchParams();
+    sp.set('export', '1');
+    if (codesStatus) sp.set('status', codesStatus);
+    if (codesBatchId) sp.set('batch_id', codesBatchId);
+    if (codesQ) sp.set('q', codesQ);
+    location.href = '/api/admin/codes?' + sp.toString();
+  };
+
+  // 按批次作废
+  $('#cf-revoke-batch').onclick = async () => {
+    if (!codesBatchId) { toast('Select a batch first', 'err'); return; }
+    if (!(await confirmDialog(t('codesConfirmRevokeT'), t('codesConfirmRevokeD') + ' Batch: ' + codesBatchId, true))) return;
+    try {
+      const r = await api('/api/admin/codes/batch-revoke', { method:'POST', body: JSON.stringify({ batch_id: codesBatchId }) });
+      toast(t('codesBatchRevokeOk', {n: r.updated || r.count || 0}));
+      loadCodes();
+    } catch(err) { toast(err.message, 'err'); }
+  };
+
+  loadCodesList();
+}
+
+async function loadCodesList(){
+  const params = new URLSearchParams();
+  params.set('page', codesPage);
+  params.set('size', 50);
+  if (codesStatus) params.set('status', codesStatus);
+  if (codesBatchId) params.set('batch_id', codesBatchId);
+  if (codesPlan) params.set('plan', codesPlan);
+  if (codesQ) params.set('q', codesQ);
+  try {
+    const d = await api('/api/admin/codes?' + params.toString());
+    $('#codes-total-count').textContent = `(${d.total})`;
+    if (!d.rows || !d.rows.length) {
+      $('#codes-table').innerHTML = `<div class="empty"><div class="icon">🎟️</div>${esc(t('codesNoCodes'))}</div>`;
+      $('#codes-pg').innerHTML = '';
+      return;
+    }
+    const statusLabel = { unused: t('codesStatusUnused'), active: t('codesStatusActive'), expired: t('codesStatusExpired'), exhausted: t('codesStatusExhausted'), revoked: t('codesStatusRevoked') };
+    const statusColor = { unused: '#9aa4b2', active: '#60a5fa', expired: '#fbbf24', exhausted: '#f87171', revoked: '#a3a3a3' };
+    $('#codes-table').innerHTML = `
+      <div style="overflow-x:auto">
+      <table class="admin-table" style="width:100%;border-collapse:separate;border-spacing:0;font-size:13px">
+        <thead>
+          <tr style="text-align:left;color:var(--text-2);border-bottom:1px solid var(--stroke)">
+            <th style="padding:10px 8px">${esc(t('codesColCode'))}</th>
+            <th style="padding:10px 8px">${esc(t('codesColPlan'))}</th>
+            <th style="padding:10px 8px">${esc(t('codesColBatch'))}</th>
+            <th style="padding:10px 8px">${esc(t('codesColTraffic'))}</th>
+            <th style="padding:10px 8px">${esc(t('codesColStatus'))}</th>
+            <th style="padding:10px 8px">${esc(t('codesColActivated'))}</th>
+            <th style="padding:10px 8px">${esc(t('codesColActions'))}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${d.rows.map(r => {
+            const trafficGB = r.traffic_bytes > 0 ? (r.traffic_bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB' : (r.days_valid > 0 ? t('codesUnlimited') : t('codesRemainingInfinite'));
+            const usedGB = r.used_bytes > 0 ? (r.used_bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB' : '0';
+            const pct = r.pct || 0;
+            return `<tr style="border-bottom:1px solid rgba(255,255,255,.06)">
+              <td style="padding:10px 8px;font-family:ui-monospace,'SF Mono',monospace;color:#fde68a">${esc(r.code)}</td>
+              <td style="padding:10px 8px;color:var(--text-2)">${esc(r.plan_id||'—')}</td>
+              <td style="padding:10px 8px;color:var(--text-2)">${esc(r.batch_id||'—')}</td>
+              <td style="padding:10px 8px">
+                <div>${usedGB} / ${trafficGB}</div>
+                ${r.traffic_bytes > 0 ? `<div style="margin-top:4px;height:3px;background:rgba(255,255,255,.15);border-radius:2px;overflow:hidden"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#34d399,#60a5fa);border-radius:2px"></div></div>` : ''}
+              </td>
+              <td style="padding:10px 8px"><span style="color:${statusColor[r.status]||'#fff'}">${esc(statusLabel[r.status]||r.status)}</span></td>
+              <td style="padding:10px 8px;color:var(--text-2)">${fmtTime(r.activated_at)}</td>
+              <td style="padding:10px 8px">
+                <button class="btn sm" data-query="${esc(r.code)}">${esc(t('codesQueryRemainBtn'))}</button>
+                ${r.status !== 'revoked' ? `<button class="btn sm danger" data-revoke="${esc(r.id)}">${esc(t('codesRevokeOne'))}</button>` : ''}
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+      </div>
+    `;
+
+    // 行事件
+    $$('#codes-table [data-revoke]').forEach(btn => btn.onclick = async () => {
+      if (!(await confirmDialog(t('codesConfirmRevokeT'), t('codesConfirmRevokeD'), true))) return;
+      try {
+        await api('/api/admin/codes/' + btn.dataset.revoke + '/revoke', { method:'POST' });
+        toast('OK');
+        loadCodesList();
+      } catch(err) { toast(err.message, 'err'); }
+    });
+    $$('#codes-table [data-query]').forEach(btn => btn.onclick = async () => {
+      try {
+        const r = await fetch('/api/codes/status?code=' + encodeURIComponent(btn.dataset.query));
+        const d = await r.json();
+        if (!r.ok) { toast(d.message || t('codesQueryNotFound'), 'err'); return; }
+        const rem = d.status.remaining;
+        const total = d.status.total;
+        if (rem === -1) toast(t('codesQueryResultInfinite'));
+        else toast(t('codesQueryResult', { remaining: fmtSize(rem), total: total > 0 ? fmtSize(total) : '∞' }));
+      } catch(err) { toast(err.message, 'err'); }
+    });
+
+    // 分页
+    const pages = Math.ceil(d.total / d.page_size);
+    $('#codes-pg').innerHTML = pages > 1 ? `
+      <button class="btn sm" ${d.page<=1?'disabled':''} id="pg-prev">${esc(t('prev'))}</button>
+      <span style="font-size:13px;color:var(--text-2);align-self:center">${esc(t('pageOf', {a: d.page, b: pages}))}</span>
+      <button class="btn sm" ${d.page>=pages?'disabled':''} id="pg-next">${esc(t('next'))}</button>
+    ` : '';
+    $('#pg-prev')?.addEventListener('click', () => { codesPage--; loadCodesList(); });
+    $('#pg-next')?.addEventListener('click', () => { codesPage++; loadCodesList(); });
+  } catch(err) { toast(err.message, 'err'); }
 }
 
 /* ═══════════ 设置 ═══════════ */
@@ -1411,6 +1906,17 @@ async function loadSettings(){
         </div>
       </div>
     </div>
+    <!-- IP 白名单 -->
+    <div class="glass group">
+      <div class="row" style="flex-direction:column;align-items:stretch;gap:10px">
+        <div class="info" style="margin-bottom:4px"><div class="t">🔒 ${esc(t('ipWhitelist'))}</div><div class="d">${esc(t('ipWhitelistD'))}</div></div>
+        <textarea id="st-adminips" rows="3" style="width:100%;padding:10px 12px;border-radius:12px;font-size:13px;color:#fff;background:rgba(255,255,255,.09);border:1px solid var(--stroke-strong);outline:none;font-family:ui-monospace,'SF Mono',monospace;resize:vertical" placeholder="${esc(t('ipWhitelistPh'))}">${esc(s.admin_ips ?? '')}</textarea>
+        <div class="tip" style="margin-top:4px">
+          ${s.admin_ips ? `<span style="color:#6ee7b7">${esc(t('ipWhitelistOn'))}</span>` : `<span style="color:#fde68a">${esc(t('ipWhitelistOff'))}</span>`}
+          ${esc(t('ipWhitelistHint'))}
+        </div>
+      </div>
+    </div>
     <!-- 2FA 组 -->
     <div class="glass group">
       <div class="row">
@@ -1435,59 +1941,88 @@ async function loadSettings(){
         }
       </div>
     </div>
-    <!-- Turnstile 组 -->
+    <!-- Turnstile 组 —— 状态摘要 + 配置按钮 -->
     <div class="glass group">
       <div class="row">
-        <div class="info"><div class="t">${esc(t('tsGroupTitle'))}</div>
-        <div class="d">${esc(t('tsGroupD'))}</div></div>
-      </div>
-      <div class="row">
-        <label>${esc(t('tsMode'))}</label>
-        <select id="ts-mode" style="padding:8px 12px;border-radius:12px;font-size:13px;color:#fff;background:rgba(255,255,255,.09);border:1px solid var(--stroke-strong);outline:none">
-          <option value="off" ${s.turnstile_mode==='off'?'selected':''} style="color:#111">${esc(t('tsModeOff'))}</option>
-          <option value="on_share" ${s.turnstile_mode==='on_share'?'selected':''} style="color:#111">${esc(t('tsModeShare'))}</option>
-          <option value="on_download" ${s.turnstile_mode==='on_download'?'selected':''} style="color:#111">${esc(t('tsModeDownload'))}</option>
-          <option value="both" ${s.turnstile_mode==='both'?'selected':''} style="color:#111">${esc(t('tsModeBoth'))}</option>
-        </select>
-      </div>
-      <div class="row">
-        <label>${esc(t('tsThreshold'))}</label>
-        <input type="number" id="ts-threshold" min="0" max="10000" value="${s.turnstile_threshold ?? 5}" style="width:120px;padding:8px 12px;border-radius:12px;font-size:13px;color:#fff;background:rgba(255,255,255,.09);border:1px solid var(--stroke-strong);outline:none;text-align:center">
-      </div>
-      <div class="row" style="flex-direction:column;align-items:flex-start">
-        <div style="font-size:12px;color:var(--text-3);line-height:1.6">
-          ${esc(t('tsThresholdHelp'))}<br>
-          ${s.cloudflare_turnstile_secret ? `<span style="color:#6ee7b7">${esc(t('tsSecretOk'))}</span>` : `<span style="color:#fda293">${esc(t('tsSecretMissing'))} — ${esc(t('tsSecretHint'))}</span>`}<br>
-          ${s.cloudflare_turnstile_sitekey ? `<span style="color:#6ee7b7">${esc(t('tsSitekeyCloudflareOk'))}</span>` : `<span style="color:#fde68a">${esc(t('tsSitekeyCloudflareMissing'))}</span>`}
+        <div class="info">
+          <div class="t">${esc(t('tsGroupTitle'))}</div>
+          <div class="d" style="font-size:12px;line-height:1.6">
+            <div>${esc(t('tsGroupD'))}</div>
+            <div style="margin-top:6px">
+              <span style="color:${s.turnstile_mode==='off'?'#a5b4fc':'#6ee7b7'}">${esc(t('tsMode'))}: ${s.turnstile_mode}</span>
+              · <span>${esc(t('tsThreshold'))}: ${s.turnstile_threshold ?? 5}</span>
+              · ${s.cloudflare_turnstile_secret ? `<span style="color:#6ee7b7">✓ ${esc(t('tsSecretOk'))}</span>` : `<span style="color:#fda293">⚠ ${esc(t('tsSecretMissing'))}</span>`}
+              · ${s.cloudflare_turnstile_sitekey ? `<span style="color:#6ee7b7">✓ Sitekey Cloudflare</span>` : (s.turnstile_sitekey_override ? `<span style="color:#a5d8ff">✓ Sitekey Override</span>` : `<span style="color:#fde68a">⚠ Sitekey Missing</span>`)}
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="row">
-        <label>${esc(t('tsSitekeyOverride'))}</label>
-        <input type="text" id="ts-sitekey" value="${esc(s.turnstile_sitekey_override ?? '')}" placeholder="0xAAAA..." style="flex:1;padding:8px 12px;border-radius:12px;font-size:13px;color:#fff;background:rgba(255,255,255,.09);border:1px solid var(--stroke-strong);outline:none;font-family:ui-monospace,'SF Mono',monospace">
+        <button class="btn sm primary" id="ts-configure" style="padding:10px 22px;font-size:13px;border-radius:14px">⚙️ ${esc(t('configureTurnstile'))}</button>
       </div>
       <div class="row" style="justify-content:flex-end">
         <button class="btn sm" id="ts-reset">${esc(t('tsResetVisits'))}</button>
       </div>
     </div>
+    <!-- OAuth2 组 —— 总开关 + Provider 卡片列表 -->
+    <div class="glass group">
+      <div class="row">
+        <div class="info"><div class="t">${esc(t('oauthGroupTitle'))}</div>
+          <div class="d" style="font-size:12px;line-height:1.6">
+            ${esc(t('oauthGroupD'))}
+            <div style="margin-top:6px">
+              ${s.oauth_enabled
+                ? (s.oauth_has_enabled_providers
+                    ? `<span style="color:#6ee7b7">✓ ${esc(t('oauthEnabledN',{n:s.oauth_providers?.length||0}))}</span>`
+                    : `<span style="color:#fda293">⚠ ${esc(t('oauthNoEnabled'))}</span>`)
+                : `<span style="color:#a5b4fc">${esc(t('oauthDisabled'))}</span>`}
+            </div>
+          </div>
+        </div>
+        <label class="switch"><input type="checkbox" id="oauth-enabled" ${s.oauth_enabled?'checked':''}><span class="track"><span class="thumb"></span></span></label>
+      </div>
+      <!-- Provider 卡片列表 -->
+      <div id="oauth-providers-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-top:6px">
+        ${(s.oauth_providers && s.oauth_providers.length) ? s.oauth_providers.map(p => `
+          <div class="oauth-provider-card" data-oauth-id="${esc(p.id)}" style="padding:14px;border-radius:14px;background:rgba(255,255,255,.05);border:1px solid ${p.enabled ? 'rgba(110,231,183,.35)' : 'rgba(255,255,255,.1)'}">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+              <div style="font-weight:600;font-size:14px">${esc(p.label)} <span style="font-size:11px;color:var(--text-3);font-weight:400">${esc(p.provider_type)}</span></div>
+              <span class="tag ${p.enabled?'active':''}" style="font-size:11px"><i></i>${p.enabled ? esc(t('oauthEnabled')) : esc(t('oauthDisabled'))}</span>
+            </div>
+            <div style="font-size:11.5px;color:var(--text-3);line-height:1.6">
+              <div><b>Client ID:</b> ${esc(p.client_id || '—')}</div>
+              <div><b>Secret:</b> <span style="${p.secret_configured?'color:#6ee7b7':'color:#fda293'}">${p.secret_configured ? esc(t('oauthSecretConfigured')) : esc(t('oauthSecretNotConfigured'))}</span></div>
+              <div><b>Scope:</b> ${esc(p.scope || '—')}</div>
+            </div>
+            <div style="display:flex;gap:6px;margin-top:10px">
+              <button class="btn sm" data-oauth-config="${esc(p.id)}" style="flex:1;padding:6px 10px;font-size:12px;border-radius:10px">${esc(t('oauthConfigure'))}</button>
+              <button class="btn sm" data-oauth-toggle="${esc(p.id)}" style="padding:6px 10px;font-size:12px;border-radius:10px">${p.enabled ? esc(t('oauthDisable')) : esc(t('oauthEnable'))}</button>
+              <button class="btn sm danger" data-oauth-delete="${esc(p.id)}" style="padding:6px 10px;font-size:12px;border-radius:10px">🗑️</button>
+            </div>
+          </div>`).join('') : `<div style="grid-column:1/-1;text-align:center;color:var(--text-3);font-size:13px;padding:20px">${esc(t('oauthNoProviders'))}</div>`}
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:10px">
+        <button class="btn primary" id="oauth-add" style="padding:10px 20px;font-size:13px;border-radius:14px">+ ${esc(t('oauthAddProvider'))}</button>
+      </div>
+    </div>
     <button class="btn primary" id="st-save" style="padding:14px 28px;font-size:15px;border-radius:18px">${esc(t('save'))}</button>`;
 
-  $('#st-reset-traffic').onclick = async () => {
+  $('#st-reset-traffic')?.addEventListener('click', async () => {
     if(!(await confirmDialog(t('confirmResetT'), t('confirmResetD'), false))) return;
     await api('/api/admin/traffic/reset', { method:'POST' });
     toast(t('trafficResetOk'));
     loadSettings();
-  };
-  $('#st-clear-30').onclick = async () => {
+  });
+  $('#st-clear-30')?.addEventListener('click', async () => {
     if(!(await confirmDialog(t('confirmClear30T'), t('confirmClear30D')))) return;
     const r = await api('/api/admin/logs?mode=older&days=30', { method:'DELETE' });
     toast(t('clearedN', {n: r.deleted}));
-  };
-  $('#st-clear-all').onclick = async () => {
+  });
+  $('#st-clear-all')?.addEventListener('click', async () => {
     if(!(await confirmDialog(t('confirmClearAllT'), t('confirmClearAllD')))) return;
     const r = await api('/api/admin/logs?mode=all', { method:'DELETE' });
     toast(t('clearedN', {n: r.deleted}));
-  };
-  $('#st-save').onclick = async () => {
+  });
+  $('#st-save')?.addEventListener('click', async () => {
+    // 现在只保存非 Modal 的设置项；Turnstile 和 OAuth Provider 在各自 Modal 里保存
     const body = {
       site_title: $('#st-title').value.trim(),
       traffic_limit_gb: Number($('#st-limit').value) || 0,
@@ -1495,25 +2030,235 @@ async function loadSettings(){
       count_window_hours: Number($('#st-window').value) || 0,
       auto_ban: $('#st-autoban').checked,
       ban_hours: Number($('#st-banhours').value) || 0,
-      // Turnstile
-      turnstile_mode: $('#ts-mode').value,
-      turnstile_threshold: Number($('#ts-threshold').value) || 0,
-      turnstile_sitekey_override: $('#ts-sitekey').value.trim(),
+      oauth_enabled: $('#oauth-enabled').checked,
+      admin_ips: $('#st-adminips').value.trim(),
     };
     await api('/api/admin/settings', { method:'PUT', body: JSON.stringify(body) });
     toast(t('saved'));
     loadSettings();
-  };
+  });
+
+  // ═══════════════════════════════════
+  // Turnstile 配置 Modal
+  // ═══════════════════════════════════
+  $('#ts-configure')?.addEventListener('click', async () => {
+    const s = await api('/api/admin/settings');
+    openModal(`
+      <h3>⚙️ ${esc(t('configureTurnstile'))}</h3>
+      <div class="sub">${esc(t('tsGroupD'))}</div>
+      <div class="field" style="margin-top:14px">
+        <label>${esc(t('tsMode'))}</label>
+        <select id="ts-m" style="width:100%;padding:10px 12px;border-radius:12px;font-size:13px;color:#fff;background:rgba(255,255,255,.09);border:1px solid var(--stroke-strong);outline:none">
+          <option value="off" ${s.turnstile_mode==='off'?'selected':''} style="color:#111">${esc(t('tsModeOff'))}</option>
+          <option value="on_share" ${s.turnstile_mode==='on_share'?'selected':''} style="color:#111">${esc(t('tsModeShare'))}</option>
+          <option value="on_download" ${s.turnstile_mode==='on_download'?'selected':''} style="color:#111">${esc(t('tsModeDownload'))}</option>
+          <option value="both" ${s.turnstile_mode==='both'?'selected':''} style="color:#111">${esc(t('tsModeBoth'))}</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>${esc(t('tsThreshold'))}</label>
+        <input type="number" id="ts-th" min="0" max="10000" value="${s.turnstile_threshold ?? 5}" style="width:100%;padding:10px 12px;border-radius:12px;font-size:13px;color:#fff;background:rgba(255,255,255,.09);border:1px solid var(--stroke-strong);outline:none">
+        <div class="tip">${esc(t('tsThresholdHelp'))}</div>
+      </div>
+      <div class="field">
+        <label>${esc(t('tsSitekeyOverride'))}</label>
+        <input type="text" id="ts-sko" value="${esc(s.turnstile_sitekey_override ?? '')}" placeholder="0xAAAA..." style="width:100%;padding:10px 12px;border-radius:12px;font-size:13px;color:#fff;background:rgba(255,255,255,.09);border:1px solid var(--stroke-strong);outline:none;font-family:ui-monospace,'SF Mono',monospace">
+      </div>
+      <div class="field">
+        <label>${esc(t('tsSecretOverride'))}</label>
+        <input type="password" id="ts-secret" value="" placeholder="${s.cloudflare_turnstile_secret || s.turnstile_secret_configured ? esc(t('tsSecretKeep')) : esc(t('tsSecretPlaceholder'))}" style="width:100%;padding:10px 12px;border-radius:12px;font-size:13px;color:#fff;background:rgba(255,255,255,.09);border:1px solid var(--stroke-strong);outline:none;font-family:ui-monospace,'SF Mono',monospace">
+        <div class="tip" style="line-height:1.6">
+          ${s.cloudflare_turnstile_secret
+            ? `<span style="color:#6ee7b7">✓ ${esc(t('tsSecretOk'))} — ${esc(t('tsSecretInCloudflare'))}</span>`
+            : s.turnstile_secret_configured
+              ? `<span style="color:#a5d8ff">✓ ${esc(t('tsSecretOk'))} — ${esc(t('tsSecretInDatabase'))}</span>`
+              : `<span style="color:#fda293">⚠ ${esc(t('tsSecretMissing'))} — ${esc(t('tsSecretHint'))}</span>`}<br>
+          ${s.cloudflare_turnstile_sitekey
+            ? `<span style="color:#6ee7b7">✓ Sitekey ${esc(t('tsInCloudflare'))}</span>`
+            : s.turnstile_sitekey_override
+              ? `<span style="color:#a5d8ff">✓ Sitekey ${esc(t('tsInDatabase'))}</span>`
+              : `<span style="color:#fde68a">⚠ Sitekey ${esc(t('tsMissingBoth'))}</span>`}
+        </div>
+      </div>
+      <div class="actions" style="margin-top:18px">
+        <button class="btn" data-x>${esc(t('cancel'))}</button>
+        <button class="btn primary" id="ts-save">${esc(t('save'))}</button>
+      </div>
+    `);
+    $('[data-x]')?.addEventListener('click', closeModal);
+    $('#ts-save')?.addEventListener('click', async () => {
+      const secretVal = $('#ts-secret').value.trim();
+      // 处理 Secret 三种状态：空 = 保留原值；非空(非 __keep__) = 更新；用户显式点"清除"走其他路径
+      let secretPayload = '__keep__';
+      if (secretVal === '') {
+        secretPayload = '__keep__'; // 空表示不改
+      } else if (secretVal === '__clear__') {
+        secretPayload = ''; // 显式清除（目前不用这个，占位）
+      } else {
+        secretPayload = secretVal;
+      }
+      const body = {
+        turnstile_mode: $('#ts-m').value,
+        turnstile_threshold: Number($('#ts-th').value) || 0,
+        turnstile_sitekey_override: $('#ts-sko').value.trim(),
+        turnstile_secret: secretPayload,
+      };
+      await api('/api/admin/settings', { method:'PUT', body: JSON.stringify(body) });
+      closeModal();
+      toast(t('saved'));
+      loadSettings();
+    });
+  });
 
   // Turnstile 重置访问计数
-  $('#ts-reset').onclick = async () => {
+  $('#ts-reset')?.addEventListener('click', async () => {
     if(!(await confirmDialog(t('tsResetVisits'), t('tsResetVisitsD'), false))) return;
     await api('/api/admin/turnstile/visits', { method:'DELETE' });
     toast(t('tsVisitsReset'));
+  });
+
+  // ═══════════════════════════════════
+  // OAuth2 Provider CRUD (Modal)
+  // ═══════════════════════════════════
+
+  const PROVIDER_PRESETS = {
+    github:   { name:'GitHub',    defaultScope:'user:email' },
+    google:   { name:'Google',    defaultScope:'openid email profile' },
+    microsoft:{ name:'Microsoft', defaultScope:'openid email profile User.Read' },
+    discord:  { name:'Discord',   defaultScope:'identify email' },
+    custom:   { name:'Custom',    defaultScope:'openid email profile' },
   };
+  function openOauthProviderModal(row){
+    // row = null 表示新建，否则是已有数据
+    const editing = !!row;
+    const preset = PROVIDER_PRESETS[row?.provider_type || 'github'];
+    openModal(`
+      <h3>${esc(editing ? t('oauthEditTitle') : t('oauthAddTitle'))}</h3>
+      <div class="sub">${esc(t('oauthGroupD'))}</div>
+      <div class="field" style="margin-top:14px">
+        <label>${esc(t('oauthLabel'))}</label>
+        <input type="text" id="op-label" value="${esc(row?.label || preset.name)}" placeholder="${esc(t('oauthLabel'))}" style="width:100%">
+      </div>
+      <div class="field">
+        <label>${esc(t('oauthProvider'))}</label>
+        <select id="op-type" style="width:100%">
+          <option value="github" ${row?.provider_type==='github'?'selected':''} style="color:#111">GitHub</option>
+          <option value="google" ${row?.provider_type==='google'?'selected':''} style="color:#111">Google</option>
+          <option value="microsoft" ${row?.provider_type==='microsoft'?'selected':''} style="color:#111">Microsoft</option>
+          <option value="discord" ${row?.provider_type==='discord'?'selected':''} style="color:#111">Discord</option>
+          <option value="custom" ${row?.provider_type==='custom'?'selected':''} style="color:#111">Custom / ${esc(t('custom'))}</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>${esc(t('oauthClientId'))}</label>
+        <input type="text" id="op-cid" value="${esc(row?.client_id || '')}" placeholder="${esc(t('oauthClientId'))}" style="width:100%;font-family:ui-monospace,'SF Mono',monospace">
+      </div>
+      <div class="field">
+        <label>${esc(t('oauthClientSecret'))}</label>
+        <input type="password" id="op-secret" value="" placeholder="${row?.secret_configured ? esc(t('oauthKeepSecret')) : esc(t('oauthClientSecret'))}" style="width:100%;font-family:ui-monospace,'SF Mono',monospace">
+        <div class="tip">${esc(t('oauthClientSecretHelp'))}</div>
+      </div>
+      <div class="field">
+        <label>${esc(t('oauthScope'))}</label>
+        <input type="text" id="op-scope" value="${esc(row?.scope || preset.defaultScope)}" style="width:100%">
+      </div>
+      <div id="op-custom-block" style="display:${row?.provider_type==='custom'?'block':'none'}">
+        <div class="field">
+          <label>${esc(t('oauthCustomAuthorize'))}</label>
+          <input type="text" id="op-au" value="${esc(row?.custom_authorize_url || '')}" style="width:100%;font-family:ui-monospace,'SF Mono',monospace">
+        </div>
+        <div class="field">
+          <label>${esc(t('oauthCustomToken'))}</label>
+          <input type="text" id="op-tu" value="${esc(row?.custom_token_url || '')}" style="width:100%;font-family:ui-monospace,'SF Mono',monospace">
+        </div>
+        <div class="field">
+          <label>${esc(t('oauthCustomUserinfo'))}</label>
+          <input type="text" id="op-ui" value="${esc(row?.custom_userinfo_url || '')}" style="width:100%;font-family:ui-monospace,'SF Mono',monospace">
+        </div>
+        <div class="field">
+          <label>${esc(t('oauthCustomTokenField'))}</label>
+          <input type="text" id="oauth-ctf" value="${esc(row?.custom_token_field || 'access_token')}" style="width:100%;font-family:ui-monospace,'SF Mono',monospace">
+        </div>
+      </div>
+      <div class="field" style="margin-top:8px">
+        <div style="font-size:12px;color:var(--text-3);line-height:1.6">
+          ${esc(t('oauthCallbackUrl'))}:<br>
+          <input type="text" readonly value="${esc(window.location.origin)}/oauth/callback" style="width:100%;margin-top:4px;padding:8px 12px;border-radius:10px;font-size:12px;color:#a5d8ff;background:rgba(0,0,0,.3);border:1px solid var(--stroke);outline:none;font-family:ui-monospace,'SF Mono',monospace" onclick="this.select()">
+          <div style="margin-top:4px">${esc(t('oauthCallbackHint'))}</div>
+        </div>
+      </div>
+      <div class="actions" style="margin-top:18px">
+        <button class="btn" data-x>${esc(t('cancel'))}</button>
+        <button class="btn primary" id="op-save">${esc(t('save'))}</button>
+      </div>
+    `);
+    // Provider type 切换 → 显示/隐藏 Custom 块
+    $('#op-type')?.addEventListener('change', () => {
+      $('#op-custom-block').style.display = $('#op-type').value === 'custom' ? 'block' : 'none';
+      const preset = PROVIDER_PRESETS[$('#op-type').value];
+      if (preset && $('#op-scope')?.value === '') $('#op-scope').value = preset.defaultScope;
+    });
+    $('[data-x]')?.addEventListener('click', closeModal);
+    $('#op-save')?.addEventListener('click', async () => {
+      const body = {
+        label: $('#op-label').value.trim(),
+        provider_type: $('#op-type').value,
+        client_id: $('#op-cid').value.trim(),
+        scope: $('#op-scope').value.trim(),
+        enabled: row?.enabled !== false, // 默认启用
+      };
+      const secret = $('#op-secret').value.trim();
+      if (secret) body.client_secret = secret; // 非空则更新
+      else if (row?.secret_configured) body.client_secret = '__keep__'; // 编辑且未改密码 → 保留
+      else body.client_secret = ''; // 新建没填 → 空字符串不加密
+      if ($('#op-type').value === 'custom') {
+        body.custom_authorize_url = $('#op-au').value.trim();
+        body.custom_token_url = $('#op-tu').value.trim();
+        body.custom_userinfo_url = $('#op-ui').value.trim();
+        body.custom_token_field = $('#oauth-ctf').value.trim() || 'access_token';
+      }
+      try {
+        if (editing) {
+          await api(`/api/admin/oauth/providers/${row.id}`, { method:'PUT', body: JSON.stringify(body) });
+        } else {
+          await api('/api/admin/oauth/providers', { method:'POST', body: JSON.stringify(body) });
+        }
+        closeModal();
+        toast(t('saved'));
+        loadSettings();
+      } catch(err){ toast(err.message, 'err'); }
+    });
+  }
+
+  // 添加 Provider
+  $('#oauth-add')?.addEventListener('click', () => openOauthProviderModal(null));
+
+  // 列表里的按钮 —— 事件委托
+  $('#oauth-providers-grid')?.addEventListener('click', async (e) => {
+    const cfgBtn = e.target.closest('[data-oauth-config]');
+    const tglBtn = e.target.closest('[data-oauth-toggle]');
+    const delBtn = e.target.closest('[data-oauth-delete]');
+    if (!cfgBtn && !tglBtn && !delBtn) return;
+    const id = (cfgBtn || tglBtn || delBtn).dataset.oauthConfig || (cfgBtn || tglBtn || delBtn).dataset.oauthToggle || (cfgBtn || tglBtn || delBtn).dataset.oauthDelete;
+    if (!id) return;
+
+    if (cfgBtn) {
+      // 先拉一次完整数据再打开 Modal
+      const list = await api('/api/admin/oauth/providers');
+      const row = list.providers.find(p => p.id === id);
+      if (row) openOauthProviderModal(row);
+    } else if (tglBtn) {
+      await api(`/api/admin/oauth/providers/${id}/toggle`, { method:'POST' });
+      loadSettings();
+    } else if (delBtn) {
+      if (!(await confirmDialog(t('confirmDeleteTitle'), t('confirmOAuthDeleteD'), false))) return;
+      await api(`/api/admin/oauth/providers/${id}`, { method:'DELETE' });
+      loadSettings();
+    }
+  });
 
   // 2FA Setup
-  $('#twofa-setup').onclick = async () => {
+  $('#twofa-setup')?.addEventListener('click', async () => {
     const adminKey = await promptAdminKey();
     if(!adminKey) return;
     try{
@@ -1549,10 +2294,10 @@ async function loadSettings(){
         }catch(err){ toast(err.message, 'err'); }
       };
     }catch(err){ toast(err.message, 'err'); }
-  };
+  });
 
   // ── 2FA Disable ──
-  $('#twofa-disable').onclick = async () => {
+  $('#twofa-disable')?.addEventListener('click', async () => {
     if(!(await confirmDialog(t('twofaDisableT'), t('twofaDisableD'), true))) return;
     const adminKey = await promptAdminKey();
     if(!adminKey) return;
@@ -1561,10 +2306,10 @@ async function loadSettings(){
       toast(t('twofaSetupT').includes('开启') ? '2FA 已关闭' : '2FA disabled');
       loadSettings();
     }catch(err){ toast(err.message, 'err'); }
-  };
+  });
 
   // ── 2FA Regen Recovery ──
-  $('#twofa-regen').onclick = async () => {
+  $('#twofa-regen')?.addEventListener('click', async () => {
     if(!(await confirmDialog(t('twofaRegenT'), t('twofaRegenD'), false))) return;
     const adminKey = await promptAdminKey();
     if(!adminKey) return;
@@ -1572,7 +2317,7 @@ async function loadSettings(){
       const r = await api('/api/admin/2fa/regen-recovery', { method:'POST', body: JSON.stringify({ admin_key: adminKey }) });
       showRecoveryCodes(r.recovery_codes);
     }catch(err){ toast(err.message, 'err'); }
-  };
+  });
 }
 
 function promptAdminKey(){

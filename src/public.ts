@@ -1,9 +1,11 @@
 import type { Env, ShareWithFile } from "./types";
 import { getSettings, addTraffic } from "./settings";
 import { parseUA } from "./ua";
-import { clientIp } from "./auth";
+import { clientIp, isAdminWhitelisted } from "./auth";
+import { findCodeByString, checkCodeUsable, activateCodeIfNeeded, deductQuota, formatCodeStatus } from "./codes";
 import { errorPage } from "./pages";
-import { hmacHex, sha256Hex, randomHex, safeEqual } from "./crypto";
+import { hmacHex, sha256Hex, randomHex, safeEqual, decryptSecret } from "./crypto";
+import { verifyOAuthSession } from "./oauth";
 
 const TOKEN_TTL_MS = 24 * 3600_000; // 授权令牌有效期 24h
 
@@ -28,9 +30,20 @@ async function trackAndGetVisits(env: Env, ip: string): Promise<number> {
   return row?.count ?? 1;
 }
 
-/** 判断当前 Turnstile 是否可用（secret 必须在 env 里配） */
-function isTurnstileEnabled(env: Env, settings: { turnstileMode: string; turnstileThreshold: number }): boolean {
-  if (!env.turnstile_secret) return false;
+/** 从 env 或 settings.cipher 拿到最终的 Turnstile Secret（优先 env） */
+async function getTurnstileSecret(env: Env, settings: { turnstileSecretCipher: string | null }): Promise<string | null> {
+  if (env.turnstile_secret) return env.turnstile_secret;
+  if (settings.turnstileSecretCipher) return await decryptSecret(settings.turnstileSecretCipher, env.admin);
+  return null;
+}
+
+/** 判断当前 Turnstile 是否可用（secret 必须在 env 或 settings 里配） */
+export async function isTurnstileEnabled(
+  env: Env,
+  settings: { turnstileMode: string; turnstileThreshold: number; turnstileSecretCipher: string | null }
+): Promise<boolean> {
+  const secret = await getTurnstileSecret(env, settings);
+  if (!secret) return false;
   if (settings.turnstileMode === "off") return false;
   return true;
 }
@@ -51,11 +64,17 @@ export function getTurnstileInfo(
  * 验证 Turnstile token —— 向 Cloudflare siteverify 发 POST。
  * 官方要求 POST application/x-www-form-urlencoded: secret + token
  */
-export async function verifyTurnstileToken(env: Env, token: string, remoteip: string): Promise<boolean> {
-  if (!env.turnstile_secret || !token) return false;
+export async function verifyTurnstileToken(
+  env: Env,
+  settings: { turnstileSecretCipher: string | null },
+  token: string,
+  remoteip: string
+): Promise<boolean> {
+  const secret = await getTurnstileSecret(env, settings);
+  if (!secret || !token) return false;
   try {
     const form = new URLSearchParams({
-      secret: env.turnstile_secret,
+      secret,
       response: token,
       remoteip,
     });
@@ -133,16 +152,17 @@ export async function handleShareInfo(req: Request, env: Env, token: string): Pr
   const row = await getShare(env, token);
   if (!row) return Response.json({ error: "not_found" }, { status: 404 });
   const settings = await getSettings(env);
+  const ip = clientIp(req);
+  const isWhitelisted = isAdminWhitelisted(ip, settings.adminIps);
   const quotaExceeded =
-    settings.trafficLimitBytes > 0 && settings.trafficUsedBytes >= settings.trafficLimitBytes;
+    !isWhitelisted && settings.trafficLimitBytes > 0 && settings.trafficUsedBytes >= settings.trafficLimitBytes;
   let status: "ok" | "gone" | "expired" | "maxed" = "ok";
   if (row.revoked) status = "gone";
   else if (row.expires_at && row.expires_at < Date.now()) status = "expired";
   else if (row.max_downloads && row.download_count >= row.max_downloads) status = "maxed";
 
   // Turnstile：在 share 页面加载时统计一次访问，判断是否需要弹
-  const ip = clientIp(req);
-  const enabled = isTurnstileEnabled(env, settings);
+  const enabled = await isTurnstileEnabled(env, settings);
   let needsTurnstile = false;
   let visitCount = 0;
   let sitekey: string | null = null;
@@ -154,6 +174,14 @@ export async function handleShareInfo(req: Request, env: Env, token: string): Pr
       visitCount = await trackAndGetVisits(env, ip);
       needsTurnstile = visitCount > settings.turnstileThreshold;
     }
+  }
+
+  // OAuth2：检查是否已登录
+  let oauthAuthed = false;
+  let oauthProvider = settings.oauthEnabled ? settings.oauthProvider : "";
+  if (settings.oauthEnabled) {
+    const oauthCheck = await verifyOAuthSession(env, req.headers.get("cookie"));
+    oauthAuthed = oauthCheck.ok;
   }
 
   return Response.json({
@@ -176,13 +204,19 @@ export async function handleShareInfo(req: Request, env: Env, token: string): Pr
       needs_now: needsTurnstile,
       visit_count: visitCount,
     },
+    oauth: {
+      enabled: settings.oauthEnabled,
+      provider: oauthProvider,
+      client_id: settings.oauthClientId,
+      authed: oauthAuthed,
+    },
   });
 }
 
 async function getShare(env: Env, token: string): Promise<ShareWithFile | null> {
   return await env.db.prepare(
     `SELECT s.id, s.file_id, s.created_at, s.expires_at, s.max_downloads, s.download_count, s.revoked, s.password_hash,
-            f.key, f.name, f.size, f.mime
+            s.download_name, f.key, f.name, f.size, f.mime
      FROM shares s JOIN files f ON f.id = s.file_id
      WHERE s.id = ?1`
   )
@@ -202,11 +236,11 @@ export async function handleVerify(req: Request, env: Env, token: string): Promi
 
   const settings = await getSettings(env);
   const ip = clientIp(req);
-  const turnstileOn = isTurnstileEnabled(env, settings) && (settings.turnstileMode === "both");
+  const turnstileOn = await isTurnstileEnabled(env, settings) && (settings.turnstileMode === "both");
 
   // Turnstile 校验（both 模式下必须有有效 token）
   if (turnstileOn) {
-    const pass = await verifyTurnstileToken(env, String(body.turnstile ?? ""), ip);
+    const pass = await verifyTurnstileToken(env, settings, String(body.turnstile ?? ""), ip);
     if (!pass) {
       return Response.json({ error: "turnstile_failed" }, { status: 403 });
     }
@@ -233,6 +267,35 @@ export async function handleDownload(
   const ip = clientIp(req);
   const ua = req.headers.get("user-agent") ?? "";
   const country = req.headers.get("cf-ipcountry") ?? "";
+  const settings = await getSettings(env);
+
+  // ══ 解析激活码 ══
+  // 支持两种形式：URL 参数 ?code=XXX 或查询串中带 code=（cookie/localStorage 同步过来）
+  const urlCode = new URL(req.url).searchParams.get("code");
+  const headerCode = req.headers.get("x-activation-code");
+  const activationCode = (urlCode || headerCode || "").trim().toUpperCase() || null;
+  let codeRow: Awaited<ReturnType<typeof findCodeByString>> = null;
+  if (activationCode) {
+    codeRow = await findCodeByString(env, activationCode);
+    const check = checkCodeUsable(codeRow as any);
+    if (!check.ok) {
+      // 激活码不可用 → 自定义文案错误页（但不影响其他免费下载！）
+      const reason = check.reason;
+      let title = "激活码不可用";
+      if (reason === "exhausted") title = "激活码流量已耗尽";
+      if (reason === "expired") title = "激活码已过期";
+      if (reason === "revoked") title = "激活码已作废";
+      return errorPage(
+        req,
+        403,
+        { zh: title, en: "Activation Code Unavailable" },
+        { zh: check.message || reason || "该激活码不可用", en: check.message || "This activation code is not available" },
+        { siteTitle: settings.siteTitle }
+      );
+    }
+    // 码可用 → 首次使用时置为 active
+    await activateCodeIfNeeded(env, codeRow!);
+  }
 
   // 1. 封禁检查（过期自动解封）
   const ban = await env.db.prepare(
@@ -331,10 +394,30 @@ export async function handleDownload(
     );
   }
 
-  const settings = await getSettings(env);
+  // 2.6 OAuth2 下载鉴权
+  if (settings.oauthEnabled) {
+    const oauthResult = await verifyOAuthSession(env, req.headers.get("cookie"));
+    if (!oauthResult.ok) {
+      const providerName = settings.oauthProvider === "custom" ? "OAuth" : settings.oauthProvider;
+      const startUrl = `/oauth/start?provider=${encodeURIComponent(settings.oauthProvider)}&redirect=${encodeURIComponent("/s/" + token)}`;
+      return errorPage(
+        req,
+        401,
+        { zh: "需要登录", en: "OAuth Login Required" },
+        {
+          zh: `该资源需要通过 ${providerName} 账号登录后才能下载。`,
+          en: `This resource requires login with ${providerName} to download.`,
+        },
+        {
+          siteTitle: settings.siteTitle,
+          oauth_login_url: startUrl,
+        }
+      );
+    }
+  }
 
-  // 2.6 Turnstile 下载验证码（on_download / both 模式）
-  if (isTurnstileEnabled(env, settings)) {
+  // 2.7 Turnstile 下载验证码（on_download / both 模式）
+  if (await isTurnstileEnabled(env, settings)) {
     const url = new URL(req.url);
     const mode = settings.turnstileMode;
     const downloadGate = mode === "on_download" || mode === "both";
@@ -354,7 +437,7 @@ export async function handleDownload(
           { siteTitle: settings.siteTitle }
         );
       }
-      const pass = await verifyTurnstileToken(env, turnstileToken, ip);
+      const pass = await verifyTurnstileToken(env, settings, turnstileToken, ip);
       if (!pass) {
         return errorPage(
           req,
@@ -368,17 +451,22 @@ export async function handleDownload(
   }
 
   // 3. 流量限额：达到预设上限立即暂停所有下载（防止流量超额扣费）
-  if (settings.trafficLimitBytes > 0 && settings.trafficUsedBytes >= settings.trafficLimitBytes) {
-    return errorPage(
-      req,
-      503,
-      { zh: "下载已暂停", en: "Downloads Paused" },
-      {
-        zh: "本月流量已达预设限额，为避免产生额外费用，下载服务已自动暂停。请联系管理员调整限额或重置流量。",
-        en: "The monthly traffic quota has been reached. To avoid extra charges, downloads are automatically paused. Please contact the administrator to raise the quota or reset traffic.",
-      },
-      { siteTitle: settings.siteTitle }
-    );
+  //    白名单 IP 和 使用激活码的下载不受此限制（激活码有独立额度）
+  {
+    const whitelisted = isAdminWhitelisted(ip, settings.adminIps);
+    const usingCode = !!codeRow;
+    if (!whitelisted && !usingCode && settings.trafficLimitBytes > 0 && settings.trafficUsedBytes >= settings.trafficLimitBytes) {
+      return errorPage(
+        req,
+        503,
+        { zh: "下载已暂停", en: "Downloads Paused" },
+        {
+          zh: "本月流量已达预设限额，为避免产生额外费用，下载服务已自动暂停。请联系管理员调整限额或重置流量。",
+          en: "The monthly traffic quota has been reached. To avoid extra charges, downloads are automatically paused. Please contact the administrator to raise the quota or reset traffic.",
+        },
+        { siteTitle: settings.siteTitle }
+      );
+    }
   }
 
   // 4. 单 IP 重复下载检查 + 自动封禁
@@ -450,9 +538,10 @@ export async function handleDownload(
   headers.set("etag", obj.httpEtag);
   headers.set("accept-ranges", "bytes");
   headers.set("cache-control", "no-store");
+  const displayName = (row as any).download_name || row.name;
   headers.set(
     "content-disposition",
-    `attachment; filename*=UTF-8''${encodeURIComponent(row.name)}`
+    `attachment; filename*=UTF-8''${encodeURIComponent(displayName)}`
   );
   // 注意: R2 分片读取后 obj.size 仍是整个对象的大小，实际分片长度需自行计算
   const servedLen = range ? range.length : row.size;
@@ -461,18 +550,23 @@ export async function handleDownload(
     headers.set("content-range", `bytes ${range.offset}-${range.offset + servedLen - 1}/${row.size}`);
   }
 
-  // 6. 后台记录：下载日志 + 流量（计数已在主流程原子扣减完成）
+  // 6. 后台记录：下载日志 + 流量 + 激活码额度扣减
   const bytes = servedLen;
+  const codeId = codeRow ? codeRow.code : null;
   ctx.waitUntil(
     (async () => {
       const { browser, os } = parseUA(ua);
       await env.db.prepare(
-        `INSERT INTO download_logs(share_id, file_id, file_name, ip, ua, browser, os, country, bytes, created_at)
-         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`
+        `INSERT INTO download_logs(share_id, file_id, file_name, ip, ua, browser, os, country, bytes, created_at, activation_code)
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`
       )
-        .bind(token, row.file_id, row.name, ip, ua.slice(0, 500), browser, os, country, bytes, Date.now())
+        .bind(token, row.file_id, row.name, ip, ua.slice(0, 500), browser, os, country, bytes, Date.now(), codeId)
         .run();
       await addTraffic(env, bytes);
+      // 激活码额度扣减（如果这次下载用了码）
+      if (codeRow) {
+        await deductQuota(env, codeRow, bytes);
+      }
     })()
   );
 
