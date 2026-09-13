@@ -574,8 +574,13 @@ export async function handleDownload(
         .run();
       await addTraffic(env, bytes);
       // 激活码额度扣减（如果这次下载用了码）
+      // 注意：这是 response 发出后的后台扣减。如果码在 check 和扣减之间被作废，
+      // 原子 UPDATE 会自动拒绝扣减（返回 ok:false）。这里只记录结果，不影响已发出的下载。
       if (codeRow) {
-        await deductQuota(env, codeRow, bytes);
+        const dr = await deductQuota(env, codeRow, bytes);
+        if (!dr.ok) {
+          console.warn(`[code-decline] code=${codeRow.code} reason=${dr.reason} msg=${dr.message}`);
+        }
       }
     })()
   );
