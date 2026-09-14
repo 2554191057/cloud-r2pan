@@ -356,6 +356,8 @@ const I18N = {
     maxDownloadsLabel: '下载次数上限（留空或 0 = 不限）', unlimitedPlaceholder: '不限',
     maxTip: '达到上限后链接自动失效。单 IP 重复下载限制由「设置」统一控制。',
     generate: '生成链接', shareCreated: '分享链接已创建 ✨', shareCreatedSub: '复制下面的链接发给需要的人',
+    sharePageLink: '分享页（访客先看到密码/验证页）',
+    directLinkLabel: '直链（/d/xxx，跳过分享页直接下载）',
     preview: '预览分享页',
     // 分享列表
     sharesTitle: '分享链接', cleanup: '清理失效分享',
@@ -627,6 +629,8 @@ const I18N = {
     maxDownloadsLabel: 'Max downloads (empty or 0 = unlimited)', unlimitedPlaceholder: 'Unlimited',
     maxTip: 'The link expires when the cap is reached. Per-IP duplicate limits are controlled in Settings.',
     generate: 'Generate Link', shareCreated: 'Share link created ✨', shareCreatedSub: 'Copy the link below and share it',
+    sharePageLink: 'Share page (visitors see password/verification first)',
+    directLinkLabel: 'Direct link (/d/xxx — skips share page)',
     preview: 'Preview',
     // 分享列表
     sharesTitle: 'Share Links', cleanup: 'Clean up expired',
@@ -1344,18 +1348,31 @@ function openShareModal(fileId){
     try{
       const r = await api('/api/admin/shares', { method:'POST', body: JSON.stringify({ file_id: fileId, expires_hours: exp, max_downloads: max, password, download_name }) });
       const url = location.origin + r.url;
+      const directUrl = location.origin + r.direct_url;
       openModal(`
         <h3>${esc(t('shareCreated'))}</h3>
         <div class="sub">${esc(t('shareCreatedSub'))}</div>
-        <div class="link-box">
-          <input readonly value="${esc(url)}" id="sh-url" onclick="this.select()">
-          <button class="btn primary" id="sh-copy">${esc(t('copy'))}</button>
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div>
+            <div style="font-size:12px;color:rgba(255,255,255,.5);margin-bottom:6px">${esc(t('sharePageLink'))}</div>
+            <div class="link-box">
+              <input readonly value="${esc(url)}" onclick="this.select()">
+              <button class="btn primary" data-copy="${esc(url)}">${esc(t('copy'))}</button>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:12px;color:rgba(255,255,255,.5);margin-bottom:6px">${esc(t('directLinkLabel'))}</div>
+            <div class="link-box">
+              <input readonly value="${esc(directUrl)}" onclick="this.select()">
+              <button class="btn primary" data-copy="${esc(directUrl)}">${esc(t('copy'))}</button>
+            </div>
+          </div>
         </div>
         <div class="actions">
           <button class="btn" data-x>${esc(t('close'))}</button>
           <button class="btn primary" id="sh-open">${esc(t('preview'))}</button>
         </div>`);
-      $('#sh-copy').onclick = () => copyText(url);
+      document.querySelectorAll('[data-copy]').forEach(b => b.onclick = () => copyText(b.dataset.copy));
       $('[data-x]').onclick = closeModal;
       $('#sh-open').onclick = () => window.open(r.url, '_blank');
     }catch(e){ toast(e.message, 'err'); }
@@ -1378,7 +1395,7 @@ async function loadShares(){
           return `
           <tr>
             <td class="name-cell">${ficon(s.file_name)} ${esc(s.file_name)}${s.download_name && s.download_name !== s.file_name ? `<div style="font-size:11px;color:#6ee7b7;margin-top:2px">↳ ${esc(s.download_name)}</div>` : ''}</td>
-            <td class="mono">${s.has_password?'🔒 ':''}<a href="/s/${s.id}" target="_blank" style="color:#a5d8ff;text-decoration:none">/s/${s.id}</a></td>
+            <td class="mono">${s.has_password?'🔒 ':''}<a href="/s/${s.id}" target="_blank" style="color:#a5d8ff;text-decoration:none">/s/${s.id}</a><br><span style="font-size:10px;color:rgba(255,255,255,.45)">直链 </span><a href="${s.direct_url}" target="_blank" data-direct="${location.origin}${s.direct_url}" style="color:#fde68a;text-decoration:none;font-size:11px">${s.direct_url}</a><button class="btn sm" data-cdirect="${location.origin}${s.direct_url}" style="padding:1px 6px;font-size:10px;margin-left:2px">📋</button></td>
             <td class="mono">${pw ? `<span id="pw-${s.id}" style="font-family:ui-monospace,'SF Mono',monospace;color:#fde68a">••••••</span>
               <button class="btn sm" data-pw="${s.id}" data-val="${esc(pw)}" style="padding:2px 8px;font-size:11px;margin-left:4px">👁</button>
               <button class="btn sm" data-cpw="${esc(pw)}" style="padding:2px 8px;font-size:11px">📋</button>` : `<span style="color:var(--text-3)">—</span>`}</td>
@@ -1421,6 +1438,10 @@ async function loadShares(){
   // 复制密码
   $$('[data-cpw]').forEach(b => {
     b.onclick = () => copyText(b.dataset.cpw);
+  });
+  // 复制直链
+  $$('[data-cdirect]').forEach(b => {
+    b.onclick = () => copyText(b.dataset.cdirect);
   });
 }
 

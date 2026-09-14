@@ -379,7 +379,7 @@ export async function handleAdminApi(
     )
       .bind(id, body.file_id, Date.now(), expiresAt, maxDownloads, passwordHash, passwordCipher, downloadName, isMarket, marketTitle, marketDesc)
       .run();
-    return json({ ok: true, id, url: `/s/${id}` }, 201);
+    return json({ ok: true, id, url: `/s/${id}`, direct_url: `/d/${id}` }, 201);
   }
 
   // ── 分享列表 ──────────────────────────────────────
@@ -393,7 +393,7 @@ export async function handleAdminApi(
        ORDER BY s.created_at DESC`
     ).all();
     const now = Date.now();
-    // 并行解密所有密码明文
+    // 并行解密所有密码明文 + 生成直链 URL
     const shares = await Promise.all(
       (results ?? []).map(async (s: any) => ({
         ...s,
@@ -402,6 +402,8 @@ export async function handleAdminApi(
         password_plain: s.password_cipher ? await decryptSecret(s.password_cipher, env.admin) : null,
         password_hash: undefined,
         password_cipher: undefined,
+        // 直链：/d/{id} 跳过 HTML 页面直接进下载
+        direct_url: `/d/${s.id}`,
         status: s.revoked
           ? "revoked"
           : s.expires_at && s.expires_at < now

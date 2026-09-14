@@ -201,6 +201,8 @@ export async function handleShareInfo(req: Request, env: Env, token: string): Pr
     max_downloads: row.max_downloads,
     needs_password: !!row.password_hash,
     quota_exceeded: quotaExceeded,
+    // 直链：/d/{id} —— 跳过 HTML 页面直接进入下载流程
+    direct_download_url: `/d/${token}`,
     site_title: settings.siteTitle,
     turnstile: {
       enabled,
