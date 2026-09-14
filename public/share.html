@@ -275,6 +275,9 @@ const I18N = {
     shared: '{d} 分享', expires: '{d} 到期',
     quotaWarn: '⚠️ 本月流量已达预设限额，下载服务已临时暂停，请联系管理员。',
     hint: '下载由 {site} 提供 · 请勿重复下载',
+    remaining: '剩余',
+    copyDirectLink: '复制直链',
+    copied: '已复制',
     switchTo: 'EN',
     // Turnstile
     turnstileBlocked: '🛡️ 需要完成人机验证',
@@ -330,6 +333,9 @@ const I18N = {
     shared: 'shared {d}', expires: 'expires {d}',
     quotaWarn: '⚠️ Monthly traffic quota reached. Downloads are temporarily paused. Please contact the administrator.',
     hint: 'Served by {site} · Please avoid duplicate downloads',
+    remaining: 'Remaining',
+    copyDirectLink: 'Copy direct link',
+    copied: 'Copied',
     switchTo: '中文',
     // Turnstile
     turnstileBlocked: '🛡️ Human verification required',
@@ -567,8 +573,8 @@ function render(d, siteName, oauthErr, oauthProviders){
         :`<span class="dot"></span><span>${esc(t('shared',{d:fmtTime(d.created_at)}))}</span>`}
     </div>
     <div class="stats">
-      <div class="stat"><div class="v">${d.downloads}</div><div class="k">${esc(t('downloads'))}</div></div>
-      <div class="stat"><div class="v">${d.max_downloads??'∞'}</div><div class="k">${esc(t('limit'))}</div></div>
+      ${d.max_downloads ? `<div class="stat"><div class="v">${d.max_downloads - d.downloads} <span style="font-size:14px;opacity:.5">/ ${d.max_downloads}</span></div><div class="k">${esc(t('remaining'))}</div></div>`
+        : `<div class="stat"><div class="v">∞</div><div class="k">${esc(t('remaining'))}</div></div>`}
       <div class="stat"><div class="v">${fmtSize(d.size)}</div><div class="k">${esc(t('size'))}</div></div>
     </div>
     ${oauthErrHtml}
@@ -593,11 +599,13 @@ function render(d, siteName, oauthErr, oauthProviders){
           ${esc(t('unlock'))}
         </a>
         <div class="pw-hint">${esc(t('unlockHint'))}</div>
+        ${d.direct_download_url ? `<button class="btn" id="copy-direct" style="margin-top:8px;background:rgba(255,255,255,.1);font-size:12px">📋 ${esc(t('copyDirectLink'))}</button>` : ''}
       </div>`
       :`<a class="btn" id="dl" href="javascript:void(0)" ${d.quota_exceeded?'style="pointer-events:none;opacity:.45"':''} ${oauthEnabled && !oauthAuthed?'style="pointer-events:none;opacity:.45"':''}>
         <svg viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M4 20h16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         ${esc(t('download'))}
       </a>
+      ${d.direct_download_url ? `<button class="btn" id="copy-direct" style="margin-top:8px;background:rgba(255,255,255,.1);font-size:12px">📋 ${esc(t('copyDirectLink'))}</button>` : ''}
       <div class="hint">${esc(t('hint', {site: siteName}))}</div>`}
   `;
 
@@ -608,6 +616,23 @@ function render(d, siteName, oauthErr, oauthProviders){
       location.reload();
     });
   }
+
+  // 复制直链按钮
+  document.getElementById('copy-direct')?.addEventListener('click', async () => {
+    const url = location.origin + (d.direct_download_url || '');
+    try {
+      await navigator.clipboard.writeText(url);
+      const btn = document.getElementById('copy-direct');
+      const origText = btn.innerHTML;
+      btn.innerHTML = '✓ ' + t('copied');
+      setTimeout(() => { btn.innerHTML = origText; }, 1500);
+    } catch {
+      // clipboard API 不可用时的回退
+      const ta = document.createElement('textarea'); ta.value = url; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch {}
+      ta.remove();
+    }
+  });
 
   // 下载按钮绑定（OAuth 未登录时禁用）
   if(!d.needs_password && !d.quota_exceeded){

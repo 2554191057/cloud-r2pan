@@ -259,6 +259,20 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
     return notFound(req);
   }
 
+  // ══════════════════════════════════════════════════════════════
+  // 直链 /d/:token —— 直接进入下载流程，无 HTML 中间页
+  // 等价于 /s/:token/download 的短路径 alias。
+  // 有密码保护的分享仍需先通过 POST /s/:token/verify 拿到令牌
+  // ══════════════════════════════════════════════════════════════
+  const directMatch = /^\/d\/([A-Za-z0-9]+)$/.exec(path);
+  if (directMatch) {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      return new Response("Method Not Allowed", { status: 405 });
+    }
+    await ensureSchema(env);
+    return handleDownload(req, env, ctx, directMatch[1]);
+  }
+
   return notFound(req);
 }
 

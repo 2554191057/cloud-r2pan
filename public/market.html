@@ -46,7 +46,7 @@ h1{font-size:28px;font-weight:700;letter-spacing:-.02em;background:linear-gradie
 }
 .sort select option{background:#1a1240;color:#fff}
 
-.stats{display:flex;gap:16px;margin-bottom:20px;font-size:13px;color:rgba(255,255,255,.55);animation:rise .5s .05s cubic-bezier(.22,1.2,.36,1) both}
+.stats{display:flex;gap:16px;margin-bottom:20px;font-size:13px;color:rgba(255,255,255,.55);animation:rise .5s .05s cubic-bezier(.22,1.2,.36,1) both;flex-wrap:wrap}
 .stats .active{color:rgba(255,255,255,.85)}
 
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:18px}
@@ -83,7 +83,7 @@ h1{font-size:28px;font-weight:700;letter-spacing:-.02em;background:linear-gradie
 .empty h3{font-size:20px;font-weight:600;margin-bottom:8px;color:rgba(255,255,255,.9)}
 .empty p{font-size:14px;color:rgba(255,255,255,.5)}
 
-.pagination{display:flex;justify-content:center;gap:8px;margin-top:32px;align-items:center;animation:rise .5s cubic-bezier(.22,1.2,.36,1) both}
+.pagination{display:flex;justify-content:center;gap:8px;margin-top:32px;align-items:center;animation:rise .5s cubic-bezier(.22,1.2,.36,1) both;flex-wrap:wrap}
 .pagination button{
   min-width:38px;height:38px;padding:0 14px;border-radius:12px;border:1px solid rgba(255,255,255,.22);
   background:linear-gradient(145deg,rgba(255,255,255,.14),rgba(255,255,255,.04));
@@ -101,6 +101,9 @@ h1{font-size:28px;font-weight:700;letter-spacing:-.02em;background:linear-gradie
 
 footer{text-align:center;font-size:12px;color:rgba(255,255,255,.3);margin-top:40px}
 footer a{color:rgba(56,189,248,.8);text-decoration:none}
+
+.lang-btn{margin-left:10px;padding:4px 13px;border-radius:11px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.1);color:#fff;font-size:12px;cursor:pointer;backdrop-filter:blur(10px);transition:all .15s}
+.lang-btn:hover{background:rgba(255,255,255,.2);color:#fff}
 </style>
 </head>
 <body>
@@ -110,27 +113,28 @@ footer a{color:rgba(56,189,248,.8);text-decoration:none}
     <div class="brand">
       <div class="brand-icon">📦</div>
       <div>
-        <h1>下载市场</h1>
-        <div class="subtitle">发现、分享、下载</div>
+        <h1 id="brand-title"></h1>
+        <div class="subtitle" id="brand-subtitle"></div>
       </div>
+      <button class="lang-btn" id="lang-toggle"></button>
     </div>
     <div class="toolbar">
       <div class="search">
-        <input id="q" type="text" placeholder="搜索文件名、标题或描述…">
+        <input id="q" type="text" placeholder="">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
       </div>
       <div class="sort">
         <select id="sort">
-          <option value="hot">🔥 热度最高</option>
-          <option value="newest">🆕 最新发布</option>
-          <option value="downloads">⬇️ 下载量</option>
-          <option value="views">👁 浏览量</option>
+          <option value="hot"></option>
+          <option value="newest"></option>
+          <option value="downloads"></option>
+          <option value="views"></option>
         </select>
       </div>
     </div>
     <div class="stats">
-      <span>共 <span id="total" class="active">—</span> 个资源</span>
-      <span>· 每页 <span class="active">12</span> 条</span>
+      <span><span id="stats-total-prefix"></span> <span id="total" class="active">—</span> <span id="stats-total-suffix"></span></span>
+      <span>· <span id="stats-perpage-prefix"></span> <span class="active">12</span> <span id="stats-perpage-suffix"></span></span>
     </div>
   </header>
 
@@ -142,17 +146,145 @@ footer a{color:rgba(56,189,248,.8);text-decoration:none}
   </main>
 
   <footer>
-    Powered by cloud-r2pan · <a href="/admin">管理后台</a>
+    <span id="footer-text"></span>
   </footer>
 </div>
 
 <script>
+/* ═══════════ i18n ═══════════ */
+const I18N = {
+  zh: {
+    pageTitle: '下载市场 · cloud-r2pan',
+    brandTitle: '下载市场',
+    brandSubtitle: '发现、分享、下载',
+    searchPlaceholder: '搜索文件名、标题或描述…',
+    sortHot: '🔥 热度最高',
+    sortNewest: '🆕 最新发布',
+    sortDownloads: '⬇️ 下载量',
+    sortViews: '👁 浏览量',
+    statsTotalPrefix: '共',
+    statsTotalSuffix: '个资源',
+    statsPerpagePrefix: '每页',
+    statsPerpageSuffix: '条',
+    footerText: 'Powered by cloud-r2pan · <a href="/admin">管理后台</a>',
+    switchTo: 'EN',
+    loading: '加载中…',
+    loadFailTitle: '加载失败',
+    loadFailDesc: '稍后再试',
+    networkErrTitle: '网络错误',
+    networkErrDesc: '请检查网络连接',
+    emptySearchTitle: '没找到相关资源',
+    emptySearchDesc: '试试换个关键词',
+    emptyMarketTitle: '下载市场还是空的',
+    emptyMarketDesc: '管理员还没有公开任何文件',
+    noDesc: '暂无描述',
+    heatChampion: '👑 冠军',
+    heatRank2: '🥈',
+    heatRank3: '🥉',
+    downloadsLabel: '下载',
+    viewsLabel: '浏览',
+    prevPage: '‹',
+    nextPage: '›',
+    pagesInfoPrefix: '共',
+    pagesInfoSuffix: '页',
+    recent: '刚刚',
+    minutesAgo: '{n}分钟前',
+    hoursAgo: '{n}小时前',
+    daysAgo: '{n}天前',
+  },
+  en: {
+    pageTitle: 'Marketplace · cloud-r2pan',
+    brandTitle: 'Marketplace',
+    brandSubtitle: 'Discover · Share · Download',
+    searchPlaceholder: 'Search file name, title or description…',
+    sortHot: '🔥 Trending',
+    sortNewest: '🆕 Newest',
+    sortDownloads: '⬇️ Downloads',
+    sortViews: '👁 Views',
+    statsTotalPrefix: '',
+    statsTotalSuffix: 'resources',
+    statsPerpagePrefix: '',
+    statsPerpageSuffix: 'per page',
+    footerText: 'Powered by cloud-r2pan · <a href="/admin">Admin</a>',
+    switchTo: '中文',
+    loading: 'Loading…',
+    loadFailTitle: 'Failed to load',
+    loadFailDesc: 'Please try again later',
+    networkErrTitle: 'Network error',
+    networkErrDesc: 'Please check your connection',
+    emptySearchTitle: 'No results found',
+    emptySearchDesc: 'Try a different keyword',
+    emptyMarketTitle: 'Marketplace is empty',
+    emptyMarketDesc: 'No public files yet from the administrator',
+    noDesc: 'No description',
+    heatChampion: '👑 #1',
+    heatRank2: '🥈 #2',
+    heatRank3: '🥉 #3',
+    downloadsLabel: 'DL',
+    viewsLabel: 'View',
+    prevPage: '‹',
+    nextPage: '›',
+    pagesInfoPrefix: '',
+    pagesInfoSuffix: 'pages',
+    recent: 'just now',
+    minutesAgo: '{n}m ago',
+    hoursAgo: '{n}h ago',
+    daysAgo: '{n}d ago',
+  }
+};
+
+/** 语言检测：手动选择 > 浏览器首选语言 > 时区（大中华区） > 英文 */
+function detectLang(){
+  try {
+    const saved = localStorage.getItem('cd_lang');
+    if (saved === 'zh' || saved === 'en') return saved;
+  } catch {}
+  const first = String((navigator.languages && navigator.languages.length ? navigator.languages[0] : navigator.language) || '').toLowerCase();
+  if (first.startsWith('zh')) return 'zh';
+  if (first) return 'en';
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    if (/^Asia\/(Shanghai|Chongqing|Harbin|Urumqi|Kashgar|Hong_Kong|Macau|Taipei)$/.test(tz)) return 'zh';
+  } catch {}
+  return 'en';
+}
+
+let LANG = detectLang();
+const t = (key, params) => {
+  let s = (I18N[LANG] && I18N[LANG][key]) ?? I18N.en[key] ?? key;
+  if (params) for (const k in params) s = s.split('{' + k + '}').join(params[k]);
+  return s;
+};
+
+// 应用 i18n 到静态元素
+document.documentElement.lang = LANG === 'zh' ? 'zh-CN' : 'en';
+document.title = t('pageTitle');
+
 const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => r.querySelectorAll(s);
 const grid = $("#grid");
 const pagination = $("#pagination");
 const totalEl = $("#total");
 const qInput = $("#q");
 const sortSel = $("#sort");
+
+$('#brand-title').textContent = t('brandTitle');
+$('#brand-subtitle').textContent = t('brandSubtitle');
+$('#q').placeholder = t('searchPlaceholder');
+$('#sort option[value="hot"]').textContent = t('sortHot');
+$('#sort option[value="newest"]').textContent = t('sortNewest');
+$('#sort option[value="downloads"]').textContent = t('sortDownloads');
+$('#sort option[value="views"]').textContent = t('sortViews');
+$('#stats-total-prefix').textContent = t('statsTotalPrefix');
+$('#stats-total-suffix').textContent = t('statsTotalSuffix');
+$('#stats-perpage-prefix').textContent = t('statsPerpagePrefix');
+$('#stats-perpage-suffix').textContent = t('statsPerpageSuffix');
+$('#footer-text').innerHTML = t('footerText');
+$('#lang-toggle').textContent = t('switchTo');
+$('#lang-toggle').onclick = () => {
+  try { localStorage.setItem('cd_lang', LANG === 'zh' ? 'en' : 'zh'); } catch {}
+  location.reload();
+};
 
 let state = { page: 1, sort: "hot", q: "", total: 0 };
 let debounceTimer = null;
@@ -178,10 +310,10 @@ function fmtDate(ts){
   if(!ts) return "";
   const d=new Date(ts); const now=Date.now();
   const diff=now-ts;
-  if(diff<60e3) return "刚刚";
-  if(diff<3600e3) return Math.floor(diff/60e3)+"分钟前";
-  if(diff<86400e3) return Math.floor(diff/3600e3)+"小时前";
-  if(diff<7*86400e3) return Math.floor(diff/86400e3)+"天前";
+  if(diff<60e3) return t('recent');
+  if(diff<3600e3) return t('minutesAgo',{n:Math.floor(diff/60e3)});
+  if(diff<86400e3) return t('hoursAgo',{n:Math.floor(diff/3600e3)});
+  if(diff<7*86400e3) return t('daysAgo',{n:Math.floor(diff/86400e3)});
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
 
@@ -194,34 +326,37 @@ async function load(){
     const r = await fetch(url);
     if(!r.ok) throw new Error("HTTP "+r.status);
     const d = await r.json();
-    if(!d.ok){ renderEmpty("😵","加载失败","稍后再试"); return; }
+    if(!d.ok){ renderEmpty("😵",t('loadFailTitle'),t('loadFailDesc')); return; }
     state.total = d.total;
     totalEl.textContent = d.total;
     render(d.items || [], d.total, d.page, d.size);
   } catch(e){
     console.error(e);
-    renderEmpty("😵","网络错误","请检查网络连接");
+    renderEmpty("😵",t('networkErrTitle'),t('networkErrDesc'));
   }
 }
 
 function render(items, total, page, size){
   if(!items.length){
     grid.innerHTML = state.q
-      ? '<div class="empty"><div class="emoji">🔍</div><h3>没找到相关资源</h3><p>试试换个关键词</p></div>'
-      : '<div class="empty"><div class="emoji">📭</div><h3>下载市场还是空的</h3><p>管理员还没有公开任何文件</p></div>';
+      ? `<div class="empty"><div class="emoji">🔍</div><h3>${t('emptySearchTitle')}</h3><p>${t('emptySearchDesc')}</p></div>`
+      : `<div class="empty"><div class="emoji">📭</div><h3>${t('emptyMarketTitle')}</h3><p>${t('emptyMarketDesc')}</p></div>`;
     pagination.innerHTML = "";
     return;
   }
-  const heatMax = items[0].heat || 1; // 当前页最高热度（用来决定是否热门/爆火）
+  const heatMax = items[0].heat || 1;
   const cards = items.map((it, i) => {
     const heat = it.heat || 0;
     const rank = page === 1 ? i + 1 : null;
     const heatClass = rank && rank <= 3 ? "hot" : (heat > heatMax * 0.5 ? "popular" : "");
     const title = it.market_title || it.file_name;
     const desc = it.market_desc || "";
-    // 热度徽章只在热度排序时 + 前 N 显示
     const showHeatBadge = state.sort === "hot" && rank && rank <= 10;
-    const heatLabel = rank === 1 ? "👑 冠军" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : `🔥 ${heat}`;
+    let heatLabel;
+    if (rank === 1) heatLabel = t('heatChampion');
+    else if (rank === 2) heatLabel = t('heatRank2');
+    else if (rank === 3) heatLabel = t('heatRank3');
+    else heatLabel = `🔥 ${heat}`;
     const safeTitle = escapeHtml(title);
     const safeFileName = escapeHtml(it.file_name);
     const safeDesc = escapeHtml(desc);
@@ -235,12 +370,12 @@ function render(items, total, page, size){
             <div class="title" title="${safeTitle}">${safeTitle}${it.market_title && it.market_title !== it.file_name ? `<div class="alt" style="font-size:12px">${safeFileName}</div>` : ""}</div>
           </div>
         </div>
-        ${desc ? `<div class="desc" title="${safeDesc}">${safeDesc}</div>` : `<div class="desc" style="min-height:38px;color:rgba(255,255,255,.35);font-style:italic">暂无描述</div>`}
+        ${desc ? `<div class="desc" title="${safeDesc}">${safeDesc}</div>` : `<div class="desc" style="min-height:38px;color:rgba(255,255,255,.35);font-style:italic">${t('noDesc')}</div>`}
         <div class="meta">
           <div class="meta-left">
             <span class="pill">📦 ${fmtSize(it.file_size)}</span>
-            <span class="pill">⬇️ ${it.download_count || 0}</span>
-            <span class="pill">👁 ${it.market_views || 0}</span>
+            <span class="pill">⬇️ ${(it.download_count || 0)} ${t('downloadsLabel')}</span>
+            <span class="pill">👁 ${(it.market_views || 0)} ${t('viewsLabel')}</span>
           </div>
           <span class="pill" style="color:rgba(255,255,255,.5)">${fmtDate(it.created_at)}</span>
         </div>
@@ -255,15 +390,15 @@ function renderPagination(total, page, size){
   const pages = Math.max(1, Math.ceil(total / size));
   if(pages <= 1){ pagination.innerHTML = ""; return; }
   const btns = [];
-  btns.push(`<button ${page<=1?"disabled":""} data-p="${page-1}">‹</button>`);
+  btns.push(`<button ${page<=1?"disabled":""} data-p="${page-1}">${t('prevPage')}</button>`);
   const range = getPageRange(page, pages);
   if(range.start > 1){ btns.push(`<button data-p="1">1</button>`); if(range.start > 2) btns.push(`<span class="info">…</span>`); }
   for(let i = range.start; i <= range.end; i++){
     btns.push(`<button class="${i===page?'active':''}" data-p="${i}">${i}</button>`);
   }
   if(range.end < pages){ if(range.end < pages-1) btns.push(`<span class="info">…</span>`); btns.push(`<button data-p="${pages}">${pages}</button>`); }
-  btns.push(`<button ${page>=pages?"disabled":""} data-p="${page+1}">›</button>`);
-  pagination.innerHTML = `<span class="info">共 ${pages} 页</span>` + btns.join("");
+  btns.push(`<button ${page>=pages?"disabled":""} data-p="${page+1}">${t('nextPage')}</button>`);
+  pagination.innerHTML = `<span class="info">${t('pagesInfoPrefix')} ${pages} ${t('pagesInfoSuffix')}</span>` + btns.join("");
   pagination.querySelectorAll("button[data-p]").forEach(b => b.addEventListener("click", () => {
     state.page = Number(b.dataset.p); load();
   }));
