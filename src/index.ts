@@ -10,7 +10,58 @@ import {
   handleOAuthLogout,
   handleOAuthProviders,
 } from "./oauth_handlers";
-import { findCodeByString, formatCodeStatus, checkCodeUsable } from "./codes";
+import { findCodeByString, formatCodeStatus, checkCodeUsable, isCodeLenientFormat } from "./codes";
+
+/** 客户端真实 IP：从 CF 头或连接地址取 */
+function clientIp(req: Request): string {
+  const fwd = req.headers.get("cf-connecting-ip");
+  if (fwd) return fwd.split(",")[0].trim();
+  return req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
+}
+
+/**
+ * IP 限流（Worker 内存实现）：
+ *   - 只限制公开敏感端点（激活码查询）
+ *   - 1 分钟窗口内最多 30 次请求
+ *   - 超过返回 429；连续超限自动封禁 5 分钟
+ *
+ * ⚠️ Worker 无状态，内存会在隔离重启时清空。
+ *    这只是加重爆破成本，不是精确计费。要严格限流请用 KV/D1。
+ */
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;        // 1 分钟窗口
+const RATE_LIMIT_MAX = 30;                     // 窗口内最多 30 次
+const RATE_LIMIT_BAN_MS = 5 * 60 * 1000;       // 超限后封禁 5 分钟
+interface RateEntry { count: number; windowStart: number; bannedUntil: number; }
+const rateLimitMap = new Map<string, RateEntry>();
+function checkRateLimit(ip: string): { ok: boolean; retryAfterSec?: number } {
+  const now = Date.now();
+  let entry = rateLimitMap.get(ip);
+  if (!entry) {
+    entry = { count: 0, windowStart: now, bannedUntil: 0 };
+    rateLimitMap.set(ip, entry);
+  }
+  // 封禁中
+  if (entry.bannedUntil > now) {
+    return { ok: false, retryAfterSec: Math.ceil((entry.bannedUntil - now) / 1000) };
+  }
+  // 重置窗口
+  if (now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+    entry.count = 0;
+    entry.windowStart = now;
+  }
+  entry.count++;
+  if (entry.count > RATE_LIMIT_MAX) {
+    entry.bannedUntil = now + RATE_LIMIT_BAN_MS;
+    return { ok: false, retryAfterSec: Math.ceil(RATE_LIMIT_BAN_MS / 1000) };
+  }
+  // 顺便清理老条目（简单版：超过 1 分钟没访问就清掉）
+  for (const [k, v] of rateLimitMap) {
+    if (now - v.windowStart > RATE_LIMIT_WINDOW_MS * 3 && v.bannedUntil === 0) {
+      rateLimitMap.delete(k);
+    }
+  }
+  return { ok: true };
+}
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -76,9 +127,22 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   // ══════════════════════════════════════════════════════════════
   if (path === "/api/codes/status" && req.method === "GET") {
     await ensureSchema(env);
+    // ① IP 限流 —— 公开端点，防枚举爆破
+    const ip = clientIp(req);
+    const limit = checkRateLimit(ip);
+    if (!limit.ok) {
+      return Response.json(
+        { ok: false, error: "rate_limited", message: "请求过于频繁，请稍后再试" },
+        { status: 429, headers: { "Retry-After": String(limit.retryAfterSec ?? 60) } }
+      );
+    }
     const code = (new URL(req.url).searchParams.get("code") || "").trim().toUpperCase();
     if (!code) {
       return Response.json({ ok: false, error: "missing_code" }, { status: 400 });
+    }
+    // ② 格式校验 —— 纯垃圾字符直接 400，不消耗限流配额也不查 DB
+    if (!isCodeLenientFormat(code)) {
+      return Response.json({ ok: false, error: "bad_format", message: "激活码格式不正确" }, { status: 400 });
     }
     const row = await findCodeByString(env, code);
     if (!row) {
@@ -118,12 +182,14 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
       AND (s.expires_at IS NULL OR s.expires_at > ?)
       AND (s.max_downloads IS NULL OR s.download_count < s.max_downloads)
       AND s.password_hash IS NULL`;
-    const qFilter = q
-      ? ` AND (f.name LIKE ? OR COALESCE(s.market_title,'') LIKE ? OR COALESCE(s.market_desc,'') LIKE ?)`
+    // SQL LIKE 通配符转义：把用户输入中的 \ % _ 都转义，防止用户靠输入 % 列出所有文件
+    const qEsc = q ? q.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_") : null;
+    const qFilter = qEsc
+      ? ` AND (f.name LIKE ? ESCAPE '\\' OR COALESCE(s.market_title,'') LIKE ? ESCAPE '\\' OR COALESCE(s.market_desc,'') LIKE ? ESCAPE '\\')`
       : "";
     // 构建绑定数组：顺序必须严格匹配 SQL 中 ? 出现的顺序
     // activeFilter 贡献 1 个 ?，qFilter 贡献 3 个 ?
-    const qLike = q ? `%${q}%` : null;
+    const qLike = qEsc ? `%${qEsc}%` : null;
     const countBinds: any[] = [now];
     const listBinds: any[] = [now];
     if (qLike) {

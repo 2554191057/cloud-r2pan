@@ -435,6 +435,13 @@ const I18N = {
     homeRedirectMarket: '下载市场作为首页',
     homeRedirectMarketD: '访客直接访问域名根路径 / 时，自动跳转到下载市场页面（/market）而不是管理后台（/admin）',
     homeRedirectMarketHint: '默认关闭。开启后，您的站点首页就是下载市场，普通访客无法直接看到 /admin。管理员仍然可以通过 /admin 显式访问后台。',
+    codesFloatingBtn: '🎟️ 激活码浮动按钮',
+    codesFloatingBtnD: '在分享页右上角（或左上角）显示一个卡片图标，用户点击后可绑定激活码、查询额度、解绑',
+    codesFloatingBtnHint: '默认开启。关闭后用户只能通过 URL 参数 ?code=XXX 携带激活码（不推荐）',
+    codesFloatingBtnPosition: '按钮位置',
+    codesFloatingBtnPosRight: '右上角',
+    codesFloatingBtnPosLeft: '左上角',
+
     // 2FA 设置
     twofa: '两步验证 (TOTP)',
     twofaD: '使用 Google Authenticator / Microsoft Authenticator 等应用生成验证码',
@@ -699,6 +706,13 @@ const I18N = {
     homeRedirectMarket: 'Marketplace as Homepage',
     homeRedirectMarketD: 'When visitors land on your root domain /, redirect them to the marketplace (/market) instead of the admin panel (/admin)',
     homeRedirectMarketHint: 'Off by default. When enabled, your site homepage becomes the marketplace. Admins can still reach /admin explicitly.',
+    codesFloatingBtn: '🎟️ Activation Code Floating Button',
+    codesFloatingBtnD: 'Show a card icon on the share page corner. Users can bind/unbind their code and check balance by clicking it.',
+    codesFloatingBtnHint: 'On by default. When off, users can only use activation codes via the URL parameter ?code=XXX (not recommended).',
+    codesFloatingBtnPosition: 'Position',
+    codesFloatingBtnPosRight: 'Top right',
+    codesFloatingBtnPosLeft: 'Top left',
+
     // 2FA settings
     twofa: 'Two-Factor Authentication (TOTP)',
     twofaD: 'Use Google Authenticator / Microsoft Authenticator to generate one-time codes',
@@ -1943,6 +1957,23 @@ async function loadSettings(){
       </div>
       <div class="tip" style="margin-top:8px">${esc(t('homeRedirectMarketHint'))}</div>
     </div>
+    <!-- 激活码浮动按钮组 -->
+    <div class="glass group">
+      <div class="row">
+        <div class="info"><div class="t">🎟️ ${esc(t('codesFloatingBtn'))}</div><div class="d">${esc(t('codesFloatingBtnD'))}</div></div>
+        <label class="switch">
+          <input type="checkbox" id="st-codes-float" ${s.codes_floating_button_enabled !== false ? 'checked' : ''}>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="row">
+        <div class="info"><div class="t">${esc(t('codesFloatingBtnPosition'))}</div><div class="d">${esc(t('codesFloatingBtnHint'))}</div></div>
+        <select id="st-codes-pos" style="padding:9px 14px;border-radius:12px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.28);color:#fff;font-size:14px;font-family:inherit;outline:none;min-width:110px">
+          <option value="top-right" ${(s.codes_floating_button_position || 'top-right') === 'top-right' ? 'selected' : ''}>${esc(t('codesFloatingBtnPosRight'))}</option>
+          <option value="top-left" ${s.codes_floating_button_position === 'top-left' ? 'selected' : ''}>${esc(t('codesFloatingBtnPosLeft'))}</option>
+        </select>
+      </div>
+    </div>
     <!-- 2FA 组 -->
     <div class="glass group">
       <div class="row">
@@ -2059,6 +2090,8 @@ async function loadSettings(){
       oauth_enabled: $('#oauth-enabled').checked,
       admin_ips: $('#st-adminips').value.trim(),
       home_redirect_market: $('#st-home-market').checked,
+      codes_floating_button_enabled: $('#st-codes-float').checked,
+      codes_floating_button_position: $('#st-codes-pos').value,
     };
     await api('/api/admin/settings', { method:'PUT', body: JSON.stringify(body) });
     toast(t('saved'));

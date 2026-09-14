@@ -134,6 +134,106 @@ h1 { font-size: 21px; font-weight: 700; letter-spacing: -.02em; word-break: brea
 }
 .ts-blocked-title { margin-top: 22px; font-size: 14px; color: #fde68a; font-weight: 600; }
 .ts-blocked-hint { margin-top: 6px; font-size: 12.5px; color: rgba(255,255,255,.6); line-height: 1.6; }
+
+/* ═══════ 激活码浮动按钮 ═══════ */
+.code-float {
+  position: fixed;
+  top: max(16px, env(safe-area-inset-top));
+  left: max(16px, env(safe-area-inset-left));
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, rgba(10,132,255,.25), rgba(10,132,255,.1));
+  border: 1px solid rgba(10,132,255,.45);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; z-index: 50;
+  box-shadow: 0 8px 22px rgba(10,132,255,.25);
+  transition: transform .25s cubic-bezier(.22,1.2,.36,1), box-shadow .25s;
+}
+.code-float.position-right {
+  left: auto;
+  right: max(16px, env(safe-area-inset-right));
+}
+.code-float:hover { transform: translateY(-3px) scale(1.08); box-shadow: 0 12px 30px rgba(10,132,255,.35); }
+.code-float svg { width: 22px; height: 22px; color: #a5d8ff; }
+.code-float .badge {
+  position: absolute; top: -2px; right: -2px; width: 12px; height: 12px;
+  border-radius: 50%; background: #34d399; border: 2px solid #0b1026;
+}
+
+/* ═══════ 激活码弹窗 ═══════ */
+.code-modal-mask {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0,0,0,.55); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center;
+  animation: fadeIn .2s both;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.code-modal {
+  width: min(400px, 92vw); padding: 26px 24px 22px; border-radius: 28px;
+  background: linear-gradient(160deg, rgba(30,28,60,.95), rgba(15,13,38,.96));
+  backdrop-filter: blur(40px) saturate(180%); -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid rgba(255,255,255,.2);
+  box-shadow: 0 -20px 60px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.15);
+  animation: sheetUp .35s cubic-bezier(.22,1.1,.36,1) both;
+}
+@keyframes sheetUp { from { transform: translateY(40px) scale(.95); opacity: 0; } to { transform: none; opacity: 1; } }
+.code-modal h3 { font-size: 18px; font-weight: 700; letter-spacing: -.02em; display: flex; align-items: center; gap: 8px; }
+.code-modal .sub { font-size: 12.5px; color: rgba(255,255,255,.5); margin-top: 4px; }
+.code-modal .close {
+  position: absolute; top: 14px; right: 14px; width: 30px; height: 30px;
+  border-radius: 50%; border: 1px solid rgba(255,255,255,.15); background: rgba(255,255,255,.06);
+  color: rgba(255,255,255,.6); cursor: pointer; font-size: 16px;
+  display: flex; align-items: center; justify-content: center; transition: all .15s;
+}
+.code-modal .close:hover { background: rgba(255,255,255,.15); color: #fff; }
+.code-bound-row {
+  margin-top: 16px; padding: 14px 16px; border-radius: 16px;
+  background: rgba(52,211,153,.12); border: 1px solid rgba(52,211,153,.35);
+}
+.code-bound-row .label { font-size: 11px; color: rgba(110,231,183,.8); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+.code-bound-row .code { font-family: ui-monospace,'SF Mono',monospace; font-size: 14px; color: #6ee7b7; margin-top: 4px; letter-spacing: .03em; }
+.code-bound-row .detail { font-size: 12px; color: rgba(255,255,255,.6); margin-top: 6px; display: flex; justify-content: space-between; align-items: center; }
+.code-bound-row .unbind-btn {
+  padding: 6px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.15);
+  background: rgba(255,255,255,.06); color: rgba(255,255,255,.7); font-size: 12px;
+  cursor: pointer; transition: all .15s;
+}
+.code-bound-row .unbind-btn:hover { background: rgba(255,69,58,.15); border-color: rgba(255,69,58,.4); color: #ffb3ae; }
+.code-input-row {
+  margin-top: 18px; display: flex; flex-direction: column; gap: 10px;
+}
+.code-input-row input {
+  width: 100%; padding: 13px 16px; border-radius: 14px; font-size: 14px;
+  font-family: ui-monospace,'SF Mono',monospace; color: #fff; outline: none;
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.18);
+  letter-spacing: .04em; text-align: center;
+}
+.code-input-row input:focus { border-color: #3d9bff; background: rgba(255,255,255,.12); }
+.code-input-row input::placeholder { color: rgba(255,255,255,.35); }
+.code-btn-row { display: flex; gap: 10px; }
+.code-btn-row button {
+  flex: 1; padding: 12px 14px; border-radius: 13px; border: 1px solid rgba(255,255,255,.2);
+  background: rgba(255,255,255,.08); color: #fff; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: all .15s; font-family: inherit;
+}
+.code-btn-row button:hover { background: rgba(255,255,255,.15); }
+.code-btn-row button.primary {
+  background: linear-gradient(180deg,#3d9bff,#0a7cff); border-color: transparent;
+  box-shadow: 0 6px 16px rgba(10,124,255,.3);
+}
+.code-btn-row button.primary:hover { filter: brightness(1.06); }
+.code-query-result {
+  margin-top: 12px; padding: 12px 14px; border-radius: 12px; font-size: 13px;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+  color: rgba(255,255,255,.8); min-height: 20px;
+}
+.code-query-result.ok { background: rgba(52,211,153,.12); border-color: rgba(52,211,153,.35); color: #6ee7b7; }
+.code-query-result.warn { background: rgba(255,159,10,.12); border-color: rgba(255,159,10,.35); color: #fcd34d; }
+.code-query-result.err { background: rgba(255,69,58,.12); border-color: rgba(255,69,58,.35); color: #fda293; }
+.code-progress { margin-top: 8px; height: 3px; background: rgba(255,255,255,.15); border-radius: 2px; overflow: hidden; }
+.code-progress i { display: block; height: 100%; border-radius: 2px; background: linear-gradient(90deg,#34d399,#60a5fa); }
 </style>
 </head>
 <body>
@@ -194,15 +294,25 @@ const I18N = {
     oauthErrMsg: 'OAuth 登录过程中出错了，请重试或换一个方式下载。',
     oauthRetry: '重试',
     oauthSkip: '跳过登录（可能被拒绝）',
-    // 激活码
-    codeLabel: '🎟️ 激活码（可选）',
-    codePlaceholder: '输入 R2PAN-XXXX-XXXX-XXXX',
-    codeHint: '使用激活码下载可绕过月度流量限额，享独立额度',
-    codeCheck: '查询剩余额度',
+    // 激活码（浮动按钮 + 弹窗）
+    codeFloatingTitle: '🎟️ 激活码',
+    codeFloatingHint: '使用激活码可绕过月度流量限额，享独立额度下载',
+    codeBound: '已绑定的激活码',
+    codeUnbind: '解绑',
+    codeInputPh: '输入 R2PAN-XXXX-XXXX-XXXX',
+    codeQuery: '查询额度',
+    codeBind: '绑定并下载',
+    codeBindSuccess: '激活码已绑定',
+    codeBindFailed: '绑定失败：{msg}',
     codeCheckOk: '剩余 {remaining} / 总 {total}',
     codeCheckInfinite: '剩余 ∞ (无限额度)',
     codeCheckBad: '查询失败：{msg}',
-    codeRemove: '移除激活码',
+    codeStatusUnused: '未使用',
+    codeStatusActive: '使用中',
+    codeStatusRevoked: '已作废',
+    codeStatusExpired: '已过期',
+    codeStatusExhausted: '已耗尽',
+    codeNotBound: '未绑定激活码',
   },
   en: {
     pageTitle: 'Share · {site}',
@@ -239,15 +349,25 @@ const I18N = {
     oauthErrMsg: 'Something went wrong during OAuth login. Please retry.',
     oauthRetry: 'Retry',
     oauthSkip: 'Skip login (may be denied)',
-    // Activation Codes
-    codeLabel: '🎟️ Activation Code (optional)',
-    codePlaceholder: 'Enter R2PAN-XXXX-XXXX-XXXX',
-    codeHint: 'Using an activation code bypasses the monthly traffic quota with its own independent limit',
-    codeCheck: 'Check Remaining',
+    // Activation Codes (floating button + modal)
+    codeFloatingTitle: '🎟️ Activation Code',
+    codeFloatingHint: 'Use an activation code to bypass the monthly traffic quota with independent limits',
+    codeBound: 'Bound Code',
+    codeUnbind: 'Unbind',
+    codeInputPh: 'Enter R2PAN-XXXX-XXXX-XXXX',
+    codeQuery: 'Check Balance',
+    codeBind: 'Bind & Download',
+    codeBindSuccess: 'Activation code bound',
+    codeBindFailed: 'Bind failed: {msg}',
     codeCheckOk: 'Remaining {remaining} / Total {total}',
     codeCheckInfinite: 'Remaining ∞ (unlimited)',
     codeCheckBad: 'Check failed: {msg}',
-    codeRemove: 'Remove code',
+    codeStatusUnused: 'Unused',
+    codeStatusActive: 'Active',
+    codeStatusRevoked: 'Revoked',
+    codeStatusExpired: 'Expired',
+    codeStatusExhausted: 'Exhausted',
+    codeNotBound: 'No code bound',
   }
 };
 
@@ -462,18 +582,6 @@ function render(d, siteName, oauthErr, oauthProviders){
       <div id="ts-container" style="margin-top:6px">${esc(t('turnstileLoading'))}</div>
     ` : ''}
 
-    <!-- 激活码输入框（在密码框和下载按钮之前） -->
-    <div id="code-box" style="margin-top:18px;display:flex;flex-direction:column;gap:6px">
-      <div style="font-size:12.5px;color:rgba(255,255,255,.55)">${esc(t('codeLabel'))}</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <input type="text" id="activation-code" placeholder="${esc(t('codePlaceholder'))}"
-          style="flex:1;min-width:200px;padding:12px 16px;border-radius:14px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:14px;font-family:ui-monospace,'SF Mono',monospace;letter-spacing:.05em;outline:none"
-          oninput="this.value=this.value.toUpperCase()">
-        <button id="code-check" style="padding:10px 14px;border-radius:12px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:13px;cursor:pointer">${esc(t('codeCheck'))}</button>
-        <button id="code-remove" style="display:none;padding:10px 14px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.6);font-size:12px;cursor:pointer">${esc(t('codeRemove'))}</button>
-      </div>
-      <div id="code-status" style="font-size:12px;color:rgba(255,255,255,.45);min-height:16px"></div>
-    </div>
 
     ${d.needs_password && !d.quota_exceeded ? `
       <div class="pw" id="pw-box">
@@ -518,66 +626,153 @@ function render(d, siteName, oauthErr, oauthProviders){
 
   if(d.needs_password && $('#pw')) wireUnlock(d, ts, tsEnabled, tsOnDownload, oauthEnabled, oauthAuthed, oauthProviders);
 
-  // 激活码输入框事件绑定
-  const codeInput = $('#activation-code');
-  const codeCheckBtn = $('#code-check');
-  const codeRemoveBtn = $('#code-remove');
-  const codeStatus = $('#code-status');
+  // ═══════ 激活码浮动按钮 & 弹窗 ═══════
+  function getBoundCode(){ try { return localStorage.getItem('r2pan_code')?.trim().toUpperCase() || null; } catch { return null; } }
+  function setBoundCode(c){ try { if(c) localStorage.setItem('r2pan_code', c.trim().toUpperCase()); else localStorage.removeItem('r2pan_code'); } catch {} }
 
-  // 自动从 localStorage 恢复上次输入的激活码
-  try {
-    const saved = localStorage.getItem('r2pan_code');
-    if(saved && codeInput){ codeInput.value = saved.toUpperCase(); if(codeRemoveBtn) codeRemoveBtn.style.display='inline-block'; }
-  } catch {}
+  // 更新浮动按钮上的绑定状态 badge
+  function updateCodeFloatBadge(){
+    const badge = document.getElementById('code-float-badge');
+    if(!badge) return;
+    badge.style.display = getBoundCode() ? 'block' : 'none';
+  }
+  updateCodeFloatBadge();
 
-  if(codeInput){
-    codeInput.addEventListener('input', () => {
-      codeStatus.textContent = '';
-      codeRemoveBtn.style.display = codeInput.value.trim() ? 'inline-block' : 'none';
-    });
-    codeInput.addEventListener('keydown', e => {
-      if(e.key === 'Enter') { e.preventDefault(); codeCheckBtn?.click(); }
-    });
-    codeInput.addEventListener('change', () => {
-      try { if(codeInput.value.trim()) localStorage.setItem('r2pan_code', codeInput.value.trim().toUpperCase()); else localStorage.removeItem('r2pan_code'); } catch {}
-    });
-  }
-  if(codeRemoveBtn){
-    codeRemoveBtn.addEventListener('click', () => {
-      if(codeInput) { codeInput.value = ''; codeInput.focus(); }
-      codeRemoveBtn.style.display = 'none';
-      codeStatus.textContent = '';
-      try { localStorage.removeItem('r2pan_code'); } catch {}
-    });
-  }
-  if(codeCheckBtn){
-    codeCheckBtn.addEventListener('click', async () => {
-      const code = (codeInput?.value || '').trim().toUpperCase();
-      if(!code) { codeStatus.textContent = t('codeCheckBad', {msg: 'code empty'}); return; }
-      codeStatus.textContent = '...';
+  // 格式化字节数
+  const fmtBytes = n => { n = Number(n)||0; if(n<1024) return n+' B'; const u=['KB','MB','GB','TB']; let i=-1; do{n/=1024;i++;}while(n>=1024&&i<u.length-1); return n.toFixed(n>=100?0:n>=10?1:2)+' '+u[i]; };
+
+  // 状态映射
+  const statusMap = { unused: t('codeStatusUnused'), active: t('codeStatusActive'), revoked: t('codeStatusRevoked'), expired: t('codeStatusExpired'), exhausted: t('codeStatusExhausted') };
+  const statusColorMap = { unused: '#9aa4b2', active: '#60a5fa', revoked: '#a3a3a3', expired: '#fbbf24', exhausted: '#f87171' };
+
+  // 渲染激活码弹窗
+  function openCodeModal(){
+    const boundCode = getBoundCode();
+    const mask = document.createElement('div');
+    mask.className = 'code-modal-mask';
+    mask.innerHTML = `
+      <div class="code-modal" style="position:relative">
+        <h3>${esc(t('codeFloatingTitle'))}</h3>
+        <div class="sub">${esc(t('codeFloatingHint'))}</div>
+        <button class="close" title="Close">✕</button>
+        ${boundCode ? `
+        <div class="code-bound-row">
+          <div class="label">${esc(t('codeBound'))}</div>
+          <div class="code">${esc(boundCode)}</div>
+          <div class="detail">
+            <span id="code-bound-status">...</span>
+            <button class="unbind-btn" id="code-unbind">${esc(t('codeUnbind'))}</button>
+          </div>
+        </div>
+        ` : ''}
+        <div class="code-input-row">
+          <input type="text" id="code-input" placeholder="${esc(t('codeInputPh'))}" oninput="this.value=this.value.toUpperCase()" autocomplete="off">
+          <div class="code-btn-row">
+            <button id="code-query">${esc(t('codeQuery'))}</button>
+            <button id="code-bind" class="primary">${esc(t('codeBind'))}</button>
+          </div>
+        </div>
+        <div class="code-query-result" id="code-query-result" style="display:none"></div>
+      </div>
+    `;
+    document.body.appendChild(mask);
+    const close = () => { mask.remove(); };
+    mask.querySelector('.close').onclick = close;
+    mask.onclick = e => { if(e.target === mask) close(); };
+    const input = mask.querySelector('#code-input');
+    setTimeout(() => input?.focus(), 100);
+
+    // 绑定状态查询
+    if(boundCode){
+      fetch('/api/codes/status?code=' + encodeURIComponent(boundCode)).then(r => r.json()).then(d => {
+        const st = d.status || {};
+        const rem = st.remaining;
+        const pct = st.pct || 0;
+        const statusTxt = statusMap[st.status] || st.status;
+        const color = statusColorMap[st.status] || '#fff';
+        let detailHtml = `<span style="color:${color}">${esc(statusTxt)}</span>`;
+        if(rem !== undefined){
+          const remStr = rem === -1 ? t('codeCheckInfinite') : t('codeCheckOk', { remaining: fmtBytes(rem), total: st.total>0?fmtBytes(st.total):'∞' });
+          detailHtml = `<span style="color:${color}">${esc(statusTxt)}</span> · ${esc(remStr)}`;
+          if(rem !== -1 && pct > 0){
+            detailHtml += `<div class="code-progress" style="margin-top:6px;width:100%"><i style="width:${pct}%"></i></div>`;
+          }
+        }
+        mask.querySelector('#code-bound-status').innerHTML = detailHtml;
+      }).catch(() => { mask.querySelector('#code-bound-status').textContent = '—'; });
+    }
+
+    // 查询按钮
+    const resultBox = mask.querySelector('#code-query-result');
+    mask.querySelector('#code-query').onclick = async () => {
+      const code = input.value.trim().toUpperCase();
+      if(!code) return;
+      resultBox.style.display = 'block'; resultBox.className = 'code-query-result'; resultBox.textContent = '...';
+      try {
+        const r = await fetch('/api/codes/status?code=' + encodeURIComponent(code));
+        const d = await r.json();
+        const st = d.status || {};
+        if(r.ok){
+          const rem = st.remaining;
+          if(rem === -1){ resultBox.textContent = t('codeCheckInfinite'); resultBox.className = 'code-query-result ok'; }
+          else {
+            const pct = st.pct || 0;
+            resultBox.innerHTML = t('codeCheckOk', { remaining: fmtBytes(rem), total: st.total>0?fmtBytes(st.total):'∞' });
+            if(pct > 0) resultBox.innerHTML += `<div class="code-progress"><i style="width:${pct}%"></i></div>`;
+            resultBox.className = 'code-query-result ok';
+          }
+          if(!d.usable && d.reason){ resultBox.textContent += ' ⚠ ' + (d.message || statusMap[st.status] || d.reason); resultBox.className = 'code-query-result warn'; }
+        } else {
+          resultBox.textContent = d.message || t('codeCheckBad', {msg: 'not found'}); resultBox.className = 'code-query-result err';
+        }
+      } catch(err){ resultBox.textContent = t('codeCheckBad', {msg: err.message}); resultBox.className = 'code-query-result err'; }
+    };
+
+    // 绑定按钮（保存到 localStorage 并校验）
+    mask.querySelector('#code-bind').onclick = async () => {
+      const code = input.value.trim().toUpperCase();
+      if(!code) return;
+      resultBox.style.display = 'block'; resultBox.className = 'code-query-result'; resultBox.textContent = '...';
       try {
         const r = await fetch('/api/codes/status?code=' + encodeURIComponent(code));
         const d = await r.json();
         if(r.ok){
-          const st = d.status || {};
-          const rem = st.remaining;
-          if(rem === -1) codeStatus.textContent = t('codeCheckInfinite');
-          else {
-            const fmt = n => { n = Number(n)||0; if(n<1024) return n+' B'; const u=['KB','MB','GB','TB']; let i=-1; do{n/=1024;i++;}while(n>=1024&&i<u.length-1); return n.toFixed(n>=100?0:n>=10?1:2)+' '+u[i]; };
-            codeStatus.textContent = t('codeCheckOk', { remaining: fmt(rem), total: st.total>0?fmt(st.total):'∞' });
+          if(!d.usable){
+            resultBox.textContent = d.message || t('codeBindFailed', {msg: d.reason});
+            resultBox.className = 'code-query-result err';
+            return;
           }
-          if(!d.usable && d.reason){ codeStatus.textContent += ' · ' + (d.message || d.reason); codeStatus.style.color = '#fbbf24'; }
-          else codeStatus.style.color = '';
+          setBoundCode(code);
+          updateCodeFloatBadge();
+          resultBox.textContent = t('codeBindSuccess');
+          resultBox.className = 'code-query-result ok';
+          setTimeout(close, 800);
         } else {
-          codeStatus.textContent = t('codeCheckBad', {msg: d.message||'not found'});
-          codeStatus.style.color = '#f87171';
+          resultBox.textContent = d.message || t('codeBindFailed', {msg: 'not found'});
+          resultBox.className = 'code-query-result err';
         }
-      } catch(err){
-        codeStatus.textContent = t('codeCheckBad', {msg: err.message});
-        codeStatus.style.color = '#f87171';
-      }
+      } catch(err){ resultBox.textContent = t('codeBindFailed', {msg: err.message}); resultBox.className = 'code-query-result err'; }
+    };
+
+    // 解绑按钮
+    const unbindBtn = mask.querySelector('#code-unbind');
+    if(unbindBtn){
+      unbindBtn.onclick = () => {
+        setBoundCode(null);
+        updateCodeFloatBadge();
+        close();
+      };
+    }
+
+    // Enter 键 → 绑定
+    input?.addEventListener('keydown', e => {
+      if(e.key === 'Enter') { e.preventDefault(); mask.querySelector('#code-bind').click(); }
     });
   }
+
+  // 浮动按钮点击 → 打开弹窗
+  document.getElementById('code-float')?.addEventListener('click', openCodeModal);
+
 
   // 如果 on_share 模式需要弹 Turnstile，现在就开始渲染
   if(needTsNow && tsOnShare && ts.sitekey){
@@ -591,9 +786,8 @@ function render(d, siteName, oauthErr, oauthProviders){
 
 async function triggerDownload(d, ts, tsEnabled, tsOnDownload){
   const baseUrl = `/s/${token}/download`;
-  // 读取激活码
-  const codeEl = $('#activation-code');
-  const code = (codeEl?.value || '').trim().toUpperCase();
+  // 读取已绑定的激活码（从 localStorage）
+  const code = getBoundCode();
   // both / on_download 模式：先确保有 token
   if(tsEnabled && tsOnDownload){
     let tk = window.__tsToken;
@@ -623,8 +817,8 @@ async function wireUnlock(d, ts, tsEnabled, tsOnDownload){
   const unlock = async () => {
     const pass = input.value;
     if(!pass) return;
-    // 读取激活码
-    const code = ($('#activation-code')?.value || '').trim().toUpperCase();
+    // 读取已绑定的激活码（从 localStorage）
+    const code = getBoundCode();
     btn.style.pointerEvents = 'none'; btn.style.opacity = '.6';
     err.textContent = '';
     // both 模式：需要 Turnstile token

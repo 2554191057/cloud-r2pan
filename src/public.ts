@@ -216,6 +216,10 @@ export async function handleShareInfo(req: Request, env: Env, token: string): Pr
       client_id: settings.oauthClientId,
       authed: oauthAuthed,
     },
+    codes_floating_button: {
+      enabled: settings.codesFloatingButtonEnabled,
+      position: settings.codesFloatingButtonPosition,
+    },
   });
 }
 
@@ -476,45 +480,50 @@ export async function handleDownload(
   }
 
   // 4. 单 IP 重复下载检查 + 自动封禁
-  if (settings.maxDownloadsPerIp > 0) {
-    const since =
-      settings.countWindowHours > 0 ? Date.now() - settings.countWindowHours * 3600_000 : 0;
-    const { c } =
-      (await env.db.prepare(
-        "SELECT COUNT(*) AS c FROM download_logs WHERE share_id = ?1 AND ip = ?2 AND created_at > ?3"
-      )
-        .bind(token, ip, since)
-        .first<{ c: number }>()) ?? { c: 0 };
-    if (c >= settings.maxDownloadsPerIp) {
-      if (settings.autoBan) {
-        const expiresAt =
-          settings.banHours > 0 ? Date.now() + settings.banHours * 3600_000 : null;
-        await env.db.prepare(
-          `INSERT INTO banned_ips(ip, reason, banned_at, expires_at) VALUES(?1, ?2, ?3, ?4)
-           ON CONFLICT(ip) DO UPDATE SET reason = excluded.reason, banned_at = excluded.banned_at, expires_at = excluded.expires_at`
+  //    白名单 IP 和 使用激活码的下载不受此限制（和步骤 3 豁免保持一致）
+  {
+    const whitelisted = isAdminWhitelisted(ip, settings.adminIps);
+    const usingCode = !!codeRow;
+    if (!whitelisted && !usingCode && settings.maxDownloadsPerIp > 0) {
+      const since =
+        settings.countWindowHours > 0 ? Date.now() - settings.countWindowHours * 3600_000 : 0;
+      const { c } =
+        (await env.db.prepare(
+          "SELECT COUNT(*) AS c FROM download_logs WHERE share_id = ?1 AND ip = ?2 AND created_at > ?3"
         )
-          .bind(
-            ip,
-            `重复下载「${row.name}」超过 ${settings.maxDownloadsPerIp} 次`,
-            Date.now(),
-            expiresAt
+          .bind(token, ip, since)
+          .first<{ c: number }>()) ?? { c: 0 };
+      if (c >= settings.maxDownloadsPerIp) {
+        if (settings.autoBan) {
+          const expiresAt =
+            settings.banHours > 0 ? Date.now() + settings.banHours * 3600_000 : null;
+          await env.db.prepare(
+            `INSERT INTO banned_ips(ip, reason, banned_at, expires_at) VALUES(?1, ?2, ?3, ?4)
+             ON CONFLICT(ip) DO UPDATE SET reason = excluded.reason, banned_at = excluded.banned_at, expires_at = excluded.expires_at`
           )
-          .run();
+            .bind(
+              ip,
+              `重复下载「${row.name}」超过 ${settings.maxDownloadsPerIp} 次`,
+              Date.now(),
+              expiresAt
+            )
+            .run();
+        }
+        return errorPage(
+          req,
+          403,
+          { zh: "重复下载被拦截", en: "Duplicate Download Blocked" },
+          {
+            zh:
+              `同一 IP 在统计窗口内下载此资源的次数已达上限（${settings.maxDownloadsPerIp} 次）。` +
+              (settings.autoBan ? "该 IP 已被自动封禁。" : ""),
+            en:
+              `This IP has reached the download limit for this resource within the counting window (${settings.maxDownloadsPerIp}).` +
+              (settings.autoBan ? " The IP has been automatically banned." : ""),
+          },
+          { siteTitle: settings.siteTitle }
+        );
       }
-      return errorPage(
-        req,
-        403,
-        { zh: "重复下载被拦截", en: "Duplicate Download Blocked" },
-        {
-          zh:
-            `同一 IP 在统计窗口内下载此资源的次数已达上限（${settings.maxDownloadsPerIp} 次）。` +
-            (settings.autoBan ? "该 IP 已被自动封禁。" : ""),
-          en:
-            `This IP has reached the download limit for this resource within the counting window (${settings.maxDownloadsPerIp}).` +
-            (settings.autoBan ? " The IP has been automatically banned." : ""),
-        },
-        { siteTitle: settings.siteTitle }
-      );
     }
   }
 
@@ -570,8 +579,13 @@ export async function handleDownload(
         .run();
       await addTraffic(env, bytes);
       // 激活码额度扣减（如果这次下载用了码）
+      // 注意：这是 response 发出后的后台扣减。如果码在 check 和扣减之间被作废，
+      // 原子 UPDATE 会自动拒绝扣减（返回 ok:false）。这里只记录结果，不影响已发出的下载。
       if (codeRow) {
-        await deductQuota(env, codeRow, bytes);
+        const dr = await deductQuota(env, codeRow, bytes);
+        if (!dr.ok) {
+          console.warn(`[code-decline] code=${codeRow.code} reason=${dr.reason} msg=${dr.message}`);
+        }
       }
     })()
   );

@@ -69,6 +69,12 @@ export interface Settings {
   // ═══════ 下载市场首页 ═══════
   /** 是否将根路径 "/" 重定向到下载市场（而不是 /admin）。默认 false。 */
   homeRedirectMarket: boolean;
+
+  // ═══════ 激活码浮动按钮（分享页右上角的卡片图标） ═══════
+  /** 是否在分享页显示激活码浮动按钮。默认 true。 */
+  codesFloatingButtonEnabled: boolean;
+  /** 浮动按钮位置：top-right（右上）或 top-left（左上）。默认 top-right。 */
+  codesFloatingButtonPosition: "top-right" | "top-left";
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -100,6 +106,9 @@ export const DEFAULT_SETTINGS: Settings = {
   adminIps: "",
   // 下载市场
   homeRedirectMarket: false,
+  // 激活码浮动按钮
+  codesFloatingButtonEnabled: true,
+  codesFloatingButtonPosition: "top-right",
 };
 
 function toInt(v: unknown, fallback: number): number {
@@ -155,6 +164,9 @@ export async function getSettings(env: Env): Promise<Settings> {
     oauthCustomTokenField: map.get("oauth_custom_token_field") ?? DEFAULT_SETTINGS.oauthCustomTokenField,
     adminIps: map.get("admin_ips") ?? "",
     homeRedirectMarket: map.get("home_redirect_market") === "1",
+    // 激活码浮动按钮
+    codesFloatingButtonEnabled: map.get("codes_floating_button_enabled") !== "0", // 默认 true
+    codesFloatingButtonPosition: (map.get("codes_floating_button_position") ?? DEFAULT_SETTINGS.codesFloatingButtonPosition) as Settings["codesFloatingButtonPosition"],
   };
 }
 

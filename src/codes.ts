@@ -5,16 +5,61 @@ import { randomId } from "./db";
 const PREFIX = "R2PAN-";
 /** 易混字符：去掉 0 O 1 I */
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+/** 前导字符在 ALPHABET 中的位置表（快速算 checksum） */
+const ALPHABET_INDEX: Record<string, number> = {};
+for (let i = 0; i < ALPHABET.length; i++) ALPHABET_INDEX[ALPHABET[i]] = i;
 
-/** 生成一个随机激活码，格式 R2PAN-XXXX-XXXX-XXXX */
-export function generateOneCode(): string {
-  let out = PREFIX;
-  for (let g = 0; g < 3; g++) {
-    if (g > 0) out += "-";
-    const bytes = crypto.getRandomValues(new Uint8Array(4));
-    for (let i = 0; i < 4; i++) out += ALPHABET[bytes[i] % ALPHABET.length];
+/**
+ * 计算激活码的 checksum 字符。
+ * 取所有非分隔符字符的索引做多项式哈希（CRC-8 变体），映射到 ALPHABET。
+ */
+function checksumOf(body: string): string {
+  let crc = 0;
+  for (const ch of body) {
+    const idx = ALPHABET_INDEX[ch];
+    if (idx === undefined) continue;
+    crc ^= idx;
+    crc = (crc * 13 + 7) & 0xff;
   }
-  return out;
+  return ALPHABET[crc % ALPHABET.length];
+}
+
+/**
+ * 宽松格式校验：只检查 R2PAN-XXXX-XXXX-XXXX 骨架（12 字符随机 + checksum 都满足）。
+ * 纯垃圾字符直接挡掉，省一次 DB 查询。**兼容旧码**（旧码无 checksum 也会过）。
+ */
+export function isCodeLenientFormat(code: string): boolean {
+  const trimmed = code.trim().toUpperCase();
+  if (!trimmed.startsWith(PREFIX)) return false;
+  const parts = trimmed.slice(PREFIX.length).split("-");
+  if (parts.length !== 3) return false;
+  if (parts[0].length !== 4 || parts[1].length !== 4 || parts[2].length !== 4) return false;
+  const body = parts[0] + parts[1] + parts[2];
+  for (const ch of body) if (ALPHABET_INDEX[ch] === undefined) return false;
+  return true;
+}
+
+/**
+ * 严格格式校验：宽松格式 + checksum 匹配。
+ * **仅对新生成的码有效**（旧码第 12 位是随机字符，不满足）。
+ * 用于给前端 "绑定并下载" 按钮做更精确的用户输错提示。
+ */
+export function verifyCodeChecksum(code: string): boolean {
+  if (!isCodeLenientFormat(code)) return false;
+  const parts = code.trim().toUpperCase().slice(PREFIX.length).split("-");
+  const body = parts[0] + parts[1] + parts[2];
+  return body[11] === checksumOf(body.slice(0, 11));
+}
+
+/** 生成一个随机激活码，格式 R2PAN-XXXX-XXXX-XXXY（Y 为 checksum） */
+export function generateOneCode(): string {
+  let body = "";
+  for (let i = 0; i < 11; i++) {
+    const bytes = crypto.getRandomValues(new Uint8Array(1));
+    body += ALPHABET[bytes[0] % ALPHABET.length];
+  }
+  body += checksumOf(body);
+  return PREFIX + body.slice(0, 4) + "-" + body.slice(4, 8) + "-" + body.slice(8);
 }
 
 /** 批量生成 N 个**唯一**的激活码 */
@@ -50,14 +95,17 @@ export interface ActivationCodeRow {
   expires_at: number | null;
 }
 
-/** 通过 code 字符串查一条激活码（返回 null = 码不存在） */
+/** 通过 code 字符串查一条激活码（返回 null = 码不存在 / 格式错） */
 export async function findCodeByString(
   env: Env,
   codeStr: string
 ): Promise<ActivationCodeRow | null> {
+  const trimmed = codeStr.trim().toUpperCase();
+  // 宽松格式校验：纯垃圾字符直接挡掉，省一次 DB 查询
+  if (!isCodeLenientFormat(trimmed)) return null;
   return (await env.db
     .prepare("SELECT * FROM activation_codes WHERE code = ?1")
-    .bind(codeStr.trim().toUpperCase())
+    .bind(trimmed)
     .first()) as ActivationCodeRow | null;
 }
 
@@ -133,8 +181,9 @@ export async function deductQuota(
     bind = [newUsed, fresh.id];
   } else {
     // 原子 check-and-update：只有 used + bytes <= total 才更新，防止并发超扣
+    // 额度耗尽时自动把 status 切为 'exhausted'，让后台统计/过滤能正确识别
     sql =
-      "UPDATE activation_codes SET used_bytes = ?1 WHERE id = ?2 AND used_bytes + ?3 <= traffic_bytes AND status != 'revoked'";
+      "UPDATE activation_codes SET used_bytes = ?1, status = CASE WHEN ?1 >= traffic_bytes THEN 'exhausted' ELSE status END WHERE id = ?2 AND used_bytes + ?3 <= traffic_bytes AND status != 'revoked'";
     bind = [newUsed, fresh.id, bytes];
   }
 
