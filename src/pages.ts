@@ -3,22 +3,104 @@ import shareHTML from "../public/share.html";
 import marketHTML from "../public/market.html";
 import { pickLang, type L10n } from "./i18n";
 
+/**
+ * 统一安全响应头 —— 加在所有 HTML / JSON / 下载响应上。
+ * 零成本，浏览器级防护：
+ *   - CSP：允许 self + Turnstile CDN（所有页面都可能用到），允许 inline（单文件 SPA 权衡）
+ *   - X-Frame-Options：防点击劫持
+ *   - X-Content-Type-Options：防 MIME 嗅探
+ *   - Referrer-Policy：最小泄露
+ *   - Permissions-Policy：禁用不需要的浏览器能力
+ *
+ * 注意：download 响应是流式的，这里的 headers 同样适用。
+ */
+export function addSecurityHeaders(headers: Headers, opts: { isDownload?: boolean } = {}): void {
+  // CSP —— Turnstile 需要 challenges.cloudflare.com 的 script/frame/connect
+  // 'unsafe-inline' 是必要的：三个 HTML 页面都是单文件 inline JS SPA
+  const csp = opts.isDownload
+    ? "default-src 'none'; style-src 'none'; script-src 'none'; frame-src 'none'; connect-src 'none'"
+    : [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",
+        "style-src 'self' 'unsafe-inline'",
+        "frame-src 'self' https://challenges.cloudflare.com",
+        "connect-src 'self' https://challenges.cloudflare.com https://api.github.com https://api.google.com https://graph.microsoft.com https://discord.com",
+        "img-src 'self' data: https:",
+        "form-action 'self'",
+        "base-uri 'self'",
+      ].join("; ");
+
+  headers.set("Content-Security-Policy", csp);
+  headers.set("X-Frame-Options", "DENY"); // 禁止被 iframe 嵌入（防点击劫持）
+  headers.set("X-Content-Type-Options", "nosniff"); // 防 MIME 嗅探
+  headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  headers.set("Permissions-Policy", "geolocation=(), microphone=(), camera=(), payment=()");
+}
+
+/** 带安全头的 JSON 响应（API 统一用这个） */
+export function json(body: unknown, init?: ResponseInit): Response {
+  const headers = new Headers(init?.headers ?? {});
+  if (!headers.has("content-type")) headers.set("content-type", "application/json;charset=utf-8");
+  addSecurityHeaders(headers);
+  return new Response(JSON.stringify(body), { ...init, headers });
+}
+
 export function serveAdminPage(): Response {
-  return new Response(adminHTML, {
-    headers: { "content-type": "text/html;charset=utf-8", "cache-control": "no-store" },
-  });
+  const headers = new Headers({ "content-type": "text/html;charset=utf-8", "cache-control": "no-store" });
+  addSecurityHeaders(headers);
+  return new Response(adminHTML, { headers });
 }
 
-export function serveSharePage(): Response {
-  return new Response(shareHTML, {
-    headers: { "content-type": "text/html;charset=utf-8", "cache-control": "no-store" },
+/**
+ * 带 ETag 协商缓存的静态 HTML 服务。
+ * market.html / share.html 是 bundle 里的固定字符串，不会在运行时变。
+ * 用内容 hash 做 ETag，Cache-Control: max-age=0 让浏览器每次都校验。
+ * 如果 If-None-Match 命中 → 返回 304（空 body），节省 15-45KB 带宽。
+ * Worker 重新部署后 HTML 变了 → ETag 自然变 → 浏览器自动拿新版本。
+ *
+ * 安全考虑：内容是 bundle 里固定的，没有安全风险。admin.html 不走这个（必须 no-store）。
+ */
+async function serveStaticHTML(html: string, req: Request): Promise<Response> {
+  // 用 SHA-256 前 16 字符当 ETag —— 轻量且足够唯一
+  const encoder = new TextEncoder();
+  const hashBytes = await crypto.subtle.digest("SHA-256", encoder.encode(html));
+  let etag = '"';
+  const bytes = new Uint8Array(hashBytes);
+  for (let i = 0; i < 8; i++) etag += bytes[i].toString(16).padStart(2, "0");
+  etag += '"';
+
+  // 协商缓存命中 → 304 Not Modified
+  const ifNoneMatch = req.headers.get("if-none-match");
+  if (ifNoneMatch && ifNoneMatch.includes(etag)) {
+    const headers = new Headers({
+      "etag": etag,
+      "cache-control": "public, max-age=0, must-revalidate",
+    });
+    addSecurityHeaders(headers);
+    return new Response(null, { status: 304, headers });
+  }
+
+  const headers = new Headers({
+    "content-type": "text/html;charset=utf-8",
+    "cache-control": "public, max-age=0, must-revalidate",
+    "etag": etag,
   });
+  addSecurityHeaders(headers);
+  return new Response(html, { headers });
 }
 
-export function serveMarketPage(): Response {
-  return new Response(marketHTML, {
-    headers: { "content-type": "text/html;charset=utf-8", "cache-control": "no-store" },
-  });
+export async function serveSharePage(req?: Request): Promise<Response> {
+  if (req) return serveStaticHTML(shareHTML, req);
+  const headers = new Headers({ "content-type": "text/html;charset=utf-8", "cache-control": "no-store" });
+  addSecurityHeaders(headers);
+  return new Response(shareHTML, { headers });
+}
+
+export async function serveMarketPage(req?: Request): Promise<Response> {
+  if (req) return serveStaticHTML(marketHTML, req);
+  const headers = new Headers({ "content-type": "text/html;charset=utf-8", "cache-control": "no-store" });
+  addSecurityHeaders(headers);
+  return new Response(marketHTML, { headers });
 }
 
 function esc(s: string): string {
@@ -103,8 +185,7 @@ p { font-size: 15px; line-height: 1.65; color: rgba(255,255,255,.78); }
 <div class="brand">Powered by ${site}</div>
 </body>
 </html>`;
-  return new Response(html, {
-    status,
-    headers: { "content-type": "text/html;charset=utf-8", "cache-control": "no-store" },
-  });
+  const headers = new Headers({ "content-type": "text/html;charset=utf-8", "cache-control": "no-store" });
+  addSecurityHeaders(headers);
+  return new Response(html, { status, headers });
 }

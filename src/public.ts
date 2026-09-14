@@ -3,7 +3,7 @@ import { getSettings, addTraffic } from "./settings";
 import { parseUA } from "./ua";
 import { clientIp, isAdminWhitelisted } from "./auth";
 import { findCodeByString, checkCodeUsable, activateCodeIfNeeded, deductQuota, formatCodeStatus } from "./codes";
-import { errorPage } from "./pages";
+import { errorPage, json } from "./pages";
 import { hmacHex, sha256Hex, randomHex, safeEqual, decryptSecret } from "./crypto";
 import { verifyOAuthSession } from "./oauth";
 
@@ -150,7 +150,7 @@ async function verifyShareToken(env: Env, token: string, query: string): Promise
 /** GET /s/:token —— 分享页元信息（供前端渲染） */
 export async function handleShareInfo(req: Request, env: Env, token: string): Promise<Response> {
   const row = await getShare(env, token);
-  if (!row) return Response.json({ error: "not_found" }, { status: 404 });
+  if (!row) return json({ error: "not_found" }, { status: 404 });
   const settings = await getSettings(env);
   const ip = clientIp(req);
   const isWhitelisted = isAdminWhitelisted(ip, settings.adminIps);
@@ -190,7 +190,7 @@ export async function handleShareInfo(req: Request, env: Env, token: string): Pr
       .bind(token).run().catch(() => {}); // 不 await，不阻塞响应
   }
 
-  return Response.json({
+  return json({
     status,
     name: row.name,
     size: row.size,
@@ -236,9 +236,9 @@ async function getShare(env: Env, token: string): Promise<ShareWithFile | null> 
 
 /** POST /s/:token/verify —— 校验分享密码 + 可选 Turnstile，成功后颁发下载令牌 */
 export async function handleVerify(req: Request, env: Env, token: string): Promise<Response> {
-  if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
+  if (req.method !== "POST") return json({ error: "method_not_allowed" }, { status: 405 });
   const row = await getShare(env, token);
-  if (!row) return Response.json({ error: "not_found" }, { status: 404 });
+  if (!row) return json({ error: "not_found" }, { status: 404 });
   let body: { password?: string; turnstile?: string } = {};
   try {
     body = await req.json();
@@ -252,19 +252,19 @@ export async function handleVerify(req: Request, env: Env, token: string): Promi
   if (turnstileOn) {
     const pass = await verifyTurnstileToken(env, settings, String(body.turnstile ?? ""), ip);
     if (!pass) {
-      return Response.json({ error: "turnstile_failed" }, { status: 403 });
+      return json({ error: "turnstile_failed" }, { status: 403 });
     }
   }
 
   // 密码校验
   if (!row.password_hash) {
     // 无密码分享 → 如果 Turnstile 通过 + 没密码，直接给下载地址
-    return Response.json({ ok: true, url: `/s/${token}/download` });
+    return json({ ok: true, url: `/s/${token}/download` });
   }
   if (!(await verifyPassword(row.password_hash, String(body.password ?? ""))))
-    return Response.json({ error: "bad_password" }, { status: 401 });
+    return json({ error: "bad_password" }, { status: 401 });
   const ticket = await issueToken(env, token);
-  return Response.json({ ok: true, url: `/s/${token}/download?t=${ticket}` });
+  return json({ ok: true, url: `/s/${token}/download?t=${ticket}` });
 }
 
 /** GET /s/:token/download —— 下载主流程：封禁检查 → 有效性检查 → 流量限额 → 重复下载封禁 → 流式输出 */
@@ -284,12 +284,26 @@ export async function handleDownload(
   const urlCode = new URL(req.url).searchParams.get("code");
   const headerCode = req.headers.get("x-activation-code");
   const activationCode = (urlCode || headerCode || "").trim().toUpperCase() || null;
-  let codeRow: Awaited<ReturnType<typeof findCodeByString>> = null;
-  if (activationCode) {
-    codeRow = await findCodeByString(env, activationCode);
+
+  // ═════════════════════════════════════════════════════════════════
+  // 【并行化】激活码查询 + 封禁查询 + 分享查询，互不依赖，用 Promise.all
+  // 节省 1-2 次 D1 RTT 时间（取决于哪个慢）
+  // ═════════════════════════════════════════════════════════════════
+  const [codeRow, ban, row] = await Promise.all([
+    // 激活码查询（没有码就跳过）
+    activationCode ? findCodeByString(env, activationCode) : Promise.resolve(null),
+    // 封禁检查
+    env.db.prepare(
+      "SELECT reason, expires_at FROM banned_ips WHERE ip = ?1"
+    ).bind(ip).first<{ reason: string | null; expires_at: number | null }>(),
+    // 分享元数据查询
+    getShare(env, token),
+  ]);
+
+  // ══ 激活码校验 ══
+  if (activationCode && codeRow) {
     const check = checkCodeUsable(codeRow as any);
     if (!check.ok) {
-      // 激活码不可用 → 自定义文案错误页（但不影响其他免费下载！）
       const reason = check.reason;
       let title = "激活码不可用";
       if (reason === "exhausted") title = "激活码流量已耗尽";
@@ -303,19 +317,14 @@ export async function handleDownload(
         { siteTitle: settings.siteTitle }
       );
     }
-    // 码可用 → 首次使用时置为 active
-    await activateCodeIfNeeded(env, codeRow!);
+    // 码可用 → 首次使用时置为 active（不阻塞，后台异步）
+    activateCodeIfNeeded(env, codeRow!).catch(() => {});
   }
 
-  // 1. 封禁检查（过期自动解封）
-  const ban = await env.db.prepare(
-    "SELECT reason, expires_at FROM banned_ips WHERE ip = ?1"
-  )
-    .bind(ip)
-    .first<{ reason: string | null; expires_at: number | null }>();
+  // ══ 封禁检查（过期自动解封） ══
   if (ban) {
     if (ban.expires_at && ban.expires_at < Date.now()) {
-      await env.db.prepare("DELETE FROM banned_ips WHERE ip = ?1").bind(ip).run();
+      env.db.prepare("DELETE FROM banned_ips WHERE ip = ?1").bind(ip).run().catch(() => {});
     } else {
       return errorPage(
         req,
@@ -329,8 +338,7 @@ export async function handleDownload(
     }
   }
 
-  // 2. 分享有效性
-  const row = await getShare(env, token);
+  // ══ 分享有效性 ══
   if (!row)
     return errorPage(
       req,
@@ -554,10 +562,10 @@ export async function handleDownload(
   headers.set("accept-ranges", "bytes");
   headers.set("cache-control", "no-store");
   const displayName = (row as any).download_name || row.name;
-  headers.set(
-    "content-disposition",
-    `attachment; filename*=UTF-8''${encodeURIComponent(displayName)}`
-  );
+  headers.set("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(displayName)}`);
+  // 安全头：下载响应禁止浏览器渲染任何内容
+  const { addSecurityHeaders } = await import("./pages");
+  addSecurityHeaders(headers, { isDownload: true });
   // 注意: R2 分片读取后 obj.size 仍是整个对象的大小，实际分片长度需自行计算
   const servedLen = range ? range.length : row.size;
   headers.set("content-length", String(servedLen));
