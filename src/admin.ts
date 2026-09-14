@@ -7,6 +7,19 @@ import { pickLang } from "./i18n";
 import { hashPassword } from "./public";
 import { parseUA } from "./ua";
 import { encryptSecret, decryptSecret, totpGenerateSecret, totpVerify, totpUri, totpGenerateRecoveryCodes, sha256Hex, safeEqual } from "./crypto";
+import { createStorageProvider, type StorageProvider } from "./storage";
+
+/** 懒加载 StorageProvider —— 每次需要时从 settings 构造（settings 有 5s 缓存，成本低） */
+let _storagePromise: Promise<StorageProvider> | null = null;
+async function storage(env: Env): Promise<StorageProvider> {
+  if (!_storagePromise) {
+    _storagePromise = (async () => {
+      const s = await getSettings(env);
+      return createStorageProvider(env, s);
+    })();
+  }
+  return _storagePromise;
+}
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -306,27 +319,33 @@ export async function handleAdminApi(
     const id = randomId(14);
     const key = `files/${id}`;
     const mime = req.headers.get("content-type") || "application/octet-stream";
-    const obj = await env.r2.put(key, req.body, {
-      httpMetadata: { contentType: mime, contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(name)}` },
-    });
-    // ── Bug #4 修复：D1 写入失败时清理已写入的 R2 对象 ──
-    // R2 写入在 D1 之前，D1 一旦失败就会产生孤儿 R2 对象。
-    // 用 waitUntil 异步清理，让响应尽快返回给前端，不阻塞。
+    const st = await storage(env);
+    let resultSize = 0;
+    try {
+      const res = await st.put(key, req.body, {
+        contentType: mime,
+        contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
+      });
+      resultSize = res.size;
+    } catch (err: any) {
+      return json({ error: msg(req, "存储写入失败", "Storage write failed"), detail: String(err?.message || err) }, 500);
+    }
+    // ── Bug #4 修复：D1 写入失败时清理已写入的 storage 对象 ──
     try {
       await env.db.prepare(
         "INSERT INTO files(id, key, name, size, mime, uploaded_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6)"
       )
-        .bind(id, key, name, obj.size, mime, Date.now())
+        .bind(id, key, name, resultSize, mime, Date.now())
         .run();
     } catch (dbErr) {
-      ctx.waitUntil(env.r2.delete(key).catch(() => {}));
-      console.error("upload: D1 insert failed, cleaned up R2 object:", dbErr);
+      ctx.waitUntil(st.delete(key).catch(() => {}));
+      console.error("upload: D1 insert failed, cleaned up storage object:", dbErr);
       return json({ error: msg(req, "数据库写入失败，请重试", "Database write failed. Please retry.") }, 500);
     }
-    return json({ ok: true, id, name, size: obj.size }, 201);
+    return json({ ok: true, id, name, size: resultSize }, 201);
   }
 
-  // ── 删除文件（连带 R2 对象、分享、日志） ──────────
+  // ── 删除文件（连带存储对象、分享、日志） ──────────
   const fileMatch = /^\/api\/admin\/files\/([^/]+)$/.exec(path);
   if (fileMatch && method === "DELETE") {
     const fileId = fileMatch[1];
@@ -337,7 +356,8 @@ export async function handleAdminApi(
       env.db.prepare("DELETE FROM download_logs WHERE file_id = ?1").bind(fileId),
       env.db.prepare("DELETE FROM files WHERE id = ?1").bind(fileId),
     ]);
-    ctx.waitUntil(env.r2.delete(file.key));
+    const st = await storage(env);
+    ctx.waitUntil(st.delete(file.key).catch(() => {}));
     return json({ ok: true });
   }
 
@@ -446,15 +466,16 @@ export async function handleAdminApi(
       ]);
     }
 
-    // 4. 异步清理孤儿 R2 对象（不阻塞响应，R2 批量删除可能慢）
+    // 4. 异步清理孤儿存储对象（不阻塞响应，批量删除可能慢）
     if (orphanKeys.length > 0) {
       ctx.waitUntil(
         (async () => {
+          const st = await storage(env);
           for (const key of orphanKeys) {
             try {
-              await env.r2.delete(key);
+              await st.delete(key);
             } catch {
-              // R2 delete 失败不影响 DB 清理结果，静默跳过
+              // 删除失败不影响 DB 清理结果，静默跳过
             }
           }
         })()
@@ -797,6 +818,17 @@ export async function handleAdminApi(
       // 激活码浮动按钮
       codes_floating_button_enabled: s.codesFloatingButtonEnabled,
       codes_floating_button_position: s.codesFloatingButtonPosition,
+      // 存储后端
+      storage_provider: s.storageProvider || "r2",
+      storage_has_r2: !!env.r2,
+      s3_endpoint: s.s3Endpoint,
+      s3_region: s.s3Region,
+      s3_bucket: s.s3Bucket,
+      s3_access_key_id: s.s3AccessKeyId,
+      s3_addressing_style: s.s3AddressingStyle || "path",
+      s3_secret_configured: !!s.s3SecretKeyCipher,
+      // Analytics Engine
+      analytics_engine_available: !!env.analytics,
     });
   }
 
@@ -864,7 +896,36 @@ export async function handleAdminApi(
       }
     }
 
+    // ── 存储后端 ──
+    if (typeof body.storage_provider === "string") {
+      const sp = body.storage_provider;
+      if (sp === "r2" || sp === "s3") {
+        patch.storage_provider = sp;
+      }
+    }
+    if (typeof body.s3_endpoint === "string") patch.s3_endpoint = body.s3_endpoint.trim();
+    if (typeof body.s3_region === "string") patch.s3_region = body.s3_region.trim();
+    if (typeof body.s3_bucket === "string") patch.s3_bucket = body.s3_bucket.trim();
+    if (typeof body.s3_access_key_id === "string") patch.s3_access_key_id = body.s3_access_key_id.trim();
+    if (typeof body.s3_addressing_style === "string") {
+      const style = body.s3_addressing_style;
+      if (style === "path" || style === "virtual") patch.s3_addressing_style = style;
+    }
+    // S3 Secret Access Key —— 和 turnstile_secret 同样的三种处理模式
+    if (typeof body.s3_secret_key === "string") {
+      const raw = body.s3_secret_key.trim();
+      if (raw === "") {
+        patch.s3_secret_key_cipher = "";
+      } else if (raw !== "__keep__") {
+        const cipher = await encryptSecret(raw, env.admin);
+        if (cipher) patch.s3_secret_key_cipher = cipher;
+      }
+      // raw === "__keep__" 或不传 → 保留原值不动
+    }
+
     await updateSettings(env, patch);
+    // storage 配置变了，清掉缓存的 storage provider 让下次请求用新配置
+    _storagePromise = null;
     return json({ ok: true });
   }
 
@@ -1300,6 +1361,139 @@ export async function handleAdminApi(
     ).all()).results;
 
     return json({ summary, batches });
+  }
+
+  // ─══════════════════════════════════════════════════════════
+  // 存储后端连通性测试
+  // POST /api/admin/storage/test
+  // body: { provider?, endpoint?, region?, bucket?, access_key_id?, secret_key?, addressing_style? }
+  //   不传则使用 settings 里已配置的值
+  // ─══════════════════════════════════════════════════════════
+  if (path === "/api/admin/storage/test" && method === "POST") {
+    const body = await readJson<any>(req);
+    const s = await getSettings(env);
+
+    // 如果 body 里没传任何 S3 字段，用 settings 里的
+    const useS3 =
+      (body.provider ?? s.storageProvider) === "s3" &&
+      (body.endpoint ?? s.s3Endpoint) &&
+      (body.bucket ?? s.s3Bucket);
+
+    if (useS3) {
+      const secret = body.secret_key?.trim()
+        ? body.secret_key.trim()
+        : (s.s3SecretKeyCipher ? await decryptSecret(s.s3SecretKeyCipher, env.admin) : null);
+      if (!secret || !(body.access_key_id ?? s.s3AccessKeyId)) {
+        return json({ ok: false, error: "missing_s3_credentials" }, 400);
+      }
+      const { createS3Provider } = await import("./storage");
+      const cfg = {
+        endpoint: body.endpoint ?? s.s3Endpoint!,
+        region: body.region ?? s.s3Region ?? "us-east-1",
+        bucket: body.bucket ?? s.s3Bucket!,
+        accessKeyId: (body.access_key_id ?? s.s3AccessKeyId!).trim(),
+        secretAccessKey: secret,
+        addressingStyle: (body.addressing_style ?? s.s3AddressingStyle ?? "path") as "path" | "virtual",
+      };
+      try {
+        const prov = createS3Provider(cfg);
+        const testKey = `_r2pan-test-${Date.now()}`;
+        // 写一个测试对象
+        await prov.put(testKey, new TextEncoder().encode("cloud-r2pan storage test").buffer, {
+          contentType: "text/plain",
+        });
+        // 读回验证
+        const obj = await prov.get(testKey);
+        const head = await prov.head(testKey);
+        // 清理
+        await prov.delete(testKey);
+        return json({
+          ok: true,
+          provider: "s3",
+          endpoint: cfg.endpoint,
+          bucket: cfg.bucket,
+          head_ok: !!head,
+          head_size: head?.size ?? 0,
+        });
+      } catch (err: any) {
+        return json({
+          ok: false,
+          error: "s3_test_failed",
+          message: String(err?.message ?? err),
+          detail: err?.stack ?? "",
+        }, 502);
+      }
+    } else {
+      // R2 模式 —— 直接 head 一个已知 key 或 list 试一下
+      if (!env.r2) {
+        return json({ ok: false, error: "no_r2_binding_and_no_s3_configured" }, 400);
+      }
+      try {
+        // 尝试 list（轻量，能连通就行）
+        const listed = await env.r2.list({ limit: 1 });
+        return json({
+          ok: true,
+          provider: "r2",
+          bucket: "cloud-r2pan",
+          objects_found: listed.objects?.length ?? 0,
+          has_more: !!listed.truncated,
+        });
+      } catch (err: any) {
+        return json({
+          ok: false,
+          error: "r2_test_failed",
+          message: String(err?.message ?? err),
+        }, 502);
+      }
+    }
+  }
+
+  // ─══════════════════════════════════════════════════════════
+  // 全球分布统计 —— 用于「全球分布」Tab 的地球仪
+  // GET /api/admin/global/stats?since_days=7
+  //   返回每个国家的下载次数、字节数、活跃 IP 数
+  // ─══════════════════════════════════════════════════════════
+  if (path === "/api/admin/global/stats" && method === "GET") {
+    const sinceDays = Math.min(365, Math.max(1, Number(new URL(req.url).searchParams.get("since_days")) || 30));
+    const since = Date.now() - sinceDays * 86400_000;
+    const countrySql = `
+      SELECT
+        COALESCE(NULLIF(country, ''), 'ZZ') AS country,
+        COUNT(*) AS downloads,
+        COALESCE(SUM(bytes), 0) AS bytes,
+        COUNT(DISTINCT ip) AS unique_ips,
+        COUNT(DISTINCT file_name) AS unique_files
+      FROM download_logs
+      WHERE created_at > ?1
+      GROUP BY country
+      ORDER BY downloads DESC
+    `;
+    const { results }: any = await env.db.prepare(countrySql).bind(since).all();
+    const totalSql = `
+      SELECT COUNT(*) AS total_downloads, COALESCE(SUM(bytes), 0) AS total_bytes, COUNT(DISTINCT COALESCE(NULLIF(country, ''), 'ZZ')) AS countries_seen
+      FROM download_logs WHERE created_at > ?1
+    `;
+    const totals: any = await env.db.prepare(totalSql).bind(since).first();
+
+    // Analytics Engine 可用性（给前端展示提示）
+    return json({
+      since_days: sinceDays,
+      totals: {
+        downloads: totals?.total_downloads ?? 0,
+        bytes: totals?.total_bytes ?? 0,
+        countries_seen: totals?.countries_seen ?? 0,
+      },
+      countries: (results ?? []).map((r: any) => ({
+        country: r.country,
+        downloads: r.downloads,
+        bytes: r.bytes,
+        unique_ips: r.unique_ips,
+        unique_files: r.unique_files,
+      })),
+      analytics_engine_available: !!env.analytics,
+      // Analytics Engine 绑定后，下次部署可以升级为经纬度精确查询
+      geo_source: "d1_download_logs",
+    });
   }
 
   return json({ error: "not_found" }, 404);

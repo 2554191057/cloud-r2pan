@@ -1,5 +1,5 @@
 export interface Env {
-  r2: R2Bucket;
+  r2?: R2Bucket; // ⚠️ 改为可选 —— 当使用 S3 兼容存储时可以不配 R2 binding
   db: D1Database;
   admin: string;
   /** 可选：2FA 恢复密钥（Cloudflare 后台配置）。优先级高于 D1 里的恢复码。 */
@@ -8,6 +8,12 @@ export interface Env {
   turnstile_sitekey?: string;
   /** 可选：Turnstile secret（后端验证 token 用）。没配则 Turnstile 整体禁用。 */
   turnstile_secret?: string;
+  /**
+   * 可选：Workers Analytics Engine 数据集绑定。
+   * 绑定后每次下载都会写入一条数据点，用于全球分布分析。
+   * 没绑定时全球分布 Tab 会降级使用 D1 的 download_logs（只存 country，无经纬度）。
+   */
+  analytics?: AnalyticsEngineDataset;
 }
 
 export interface ShareRow {

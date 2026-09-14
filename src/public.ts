@@ -6,6 +6,19 @@ import { findCodeByString, checkCodeUsable, activateCodeIfNeeded, deductQuota, f
 import { errorPage, json } from "./pages";
 import { hmacHex, sha256Hex, randomHex, safeEqual, decryptSecret } from "./crypto";
 import { verifyOAuthSession } from "./oauth";
+import { createStorageProvider, type StorageProvider } from "./storage";
+
+/** 懒加载 StorageProvider —— 和 admin.ts 类似 */
+let _storagePromise: Promise<StorageProvider> | null = null;
+async function storage(env: Env): Promise<StorageProvider> {
+  if (!_storagePromise) {
+    _storagePromise = (async () => {
+      const s = await getSettings(env);
+      return createStorageProvider(env, s);
+    })();
+  }
+  return _storagePromise;
+}
 
 const TOKEN_TTL_MS = 24 * 3600_000; // 授权令牌有效期 24h
 
@@ -537,17 +550,19 @@ export async function handleDownload(
     }
   }
 
-  // 5. 从 R2 读取（支持断点续传 Range）
+  // 5. 从存储后端读取（支持断点续传 Range）
   const range = parseRange(req.headers.get("range"), row.size);
-  let obj: R2ObjectBody;
+  let obj;
   try {
-    obj = (await env.r2.get(row.key, range ? { range } : undefined)) as R2ObjectBody;
-  } catch {
+    const st = await storage(env);
+    obj = await st.get(row.key, range ? { offset: range.offset, length: range.length } : undefined);
+  } catch (err: any) {
+    console.error("[download] storage error:", err);
     return errorPage(
       req,
-      416,
-      { zh: "请求范围无效", en: "Invalid Range" },
-      { zh: "Range 请求无法满足，请重新下载。", en: "The range request cannot be satisfied. Please restart the download." }
+      502,
+      { zh: "存储服务错误", en: "Storage Error" },
+      { zh: "无法从存储后端读取文件，请稍后重试。", en: "Cannot read file from storage. Please try again later." }
     );
   }
   if (!obj)
@@ -559,8 +574,8 @@ export async function handleDownload(
     );
 
   const headers = new Headers();
-  obj.writeHttpMetadata(headers);
-  headers.set("etag", obj.httpEtag);
+  headers.set("content-type", obj.contentType);
+  headers.set("etag", obj.etag);
   headers.set("accept-ranges", "bytes");
   headers.set("cache-control", "no-store");
   const displayName = (row as any).download_name || row.name;
@@ -568,19 +583,49 @@ export async function handleDownload(
   // 安全头：下载响应禁止浏览器渲染任何内容
   const { addSecurityHeaders } = await import("./pages");
   addSecurityHeaders(headers, { isDownload: true });
-  // 注意: R2 分片读取后 obj.size 仍是整个对象的大小，实际分片长度需自行计算
-  const servedLen = range ? range.length : row.size;
+  // 注意: Storage provider 返回的 size：有 range 时是分片后的长度，无 range 时是整个对象大小
+  const servedLen = range ? range.length : obj.size;
   headers.set("content-length", String(servedLen));
   if (range) {
     headers.set("content-range", `bytes ${range.offset}-${range.offset + servedLen - 1}/${row.size}`);
   }
 
-  // 6. 后台记录：下载日志 + 流量 + 激活码额度扣减
+  // 6. 后台记录：下载日志 + 流量 + 激活码额度扣减 + Analytics Engine
   const bytes = servedLen;
   const codeId = codeRow ? codeRow.code : null;
   ctx.waitUntil(
     (async () => {
       const { browser, os } = parseUA(ua);
+
+      // ── Workers Analytics Engine 写入（可选，绑定后自动记录） ──
+      // 写入是 fire-and-forget 的，不影响请求延迟。
+      // blobs 列: country, file_name, browser, os, share_id, ip_hash, has_code
+      // doubles 列: bytes, download_count 占位
+      // 注意：ip 不直接写入，只写 country + 可选经纬度（Cloudflare CF-IPLatitude/IPLongitude 头）
+      if (env.analytics) {
+        try {
+          const latitude = req.headers.get("cf-ip-latitude") ?? "";
+          const longitude = req.headers.get("cf-ip-longitude") ?? "";
+          env.analytics.writeDataPoint({
+            blobs: [
+              country,              // blob1: 国家代码（US/CN/JP/..）
+              row.name,             // blob2: 文件名
+              browser,              // blob3: 浏览器
+              os,                   // blob4: 操作系统
+              token,                // blob5: share_id
+              codeId ?? "none",     // blob6: 激活码（如果有）
+              latitude,             // blob7: 纬度（CF 头提供）
+              longitude,            // blob8: 经度
+              settings.storageProvider || "r2", // blob9: 存储后端
+            ],
+            doubles: [bytes, 1],      // double1: 字节数，double2: 下载计数（恒为1）
+            indexes: [token],          // 采样 key：share_id
+          });
+        } catch {
+          // Analytics Engine 写入失败不应影响下载流程，静默忽略
+        }
+      }
+
       await env.db.prepare(
         `INSERT INTO download_logs(share_id, file_id, file_name, ip, ua, browser, os, country, bytes, created_at, activation_code)
          VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`
@@ -589,8 +634,6 @@ export async function handleDownload(
         .run();
       await addTraffic(env, bytes);
       // 激活码额度扣减（如果这次下载用了码）
-      // 注意：这是 response 发出后的后台扣减。如果码在 check 和扣减之间被作废，
-      // 原子 UPDATE 会自动拒绝扣减（返回 ok:false）。这里只记录结果，不影响已发出的下载。
       if (codeRow) {
         const dr = await deductQuota(env, codeRow, bytes);
         if (!dr.ok) {
