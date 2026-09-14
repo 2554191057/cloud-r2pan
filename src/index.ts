@@ -165,7 +165,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   // ══════════════════════════════════════════════════════════════
   // 市场 HTML 页面
   if ((path === "/market" || path === "/market/") && (req.method === "GET" || req.method === "HEAD")) {
-    return serveMarketPage();
+    return serveMarketPage(req);
   }
   // 市场搜索/排序 API
   if (path === "/api/market" && req.method === "GET") {
@@ -239,7 +239,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
       if (req.method !== "GET" && req.method !== "HEAD") {
         return new Response("Method Not Allowed", { status: 405 });
       }
-      return serveSharePage();
+      return serveSharePage(req);
     }
     if (sub === "/info") {
       return handleShareInfo(req, env, token);

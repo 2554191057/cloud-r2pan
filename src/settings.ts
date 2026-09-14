@@ -1,5 +1,25 @@
 import type { Env } from "./types";
 
+/* ═══════════ Settings 内存缓存 ═══════════
+ * 问题：getSettings() 每次都 SELECT * FROM settings 全表查询，
+ *       下载 / 分享 / OAuth / Turnstile 等高频路径都要调，
+ *       白白多一次 D1 往返。
+ *
+ * 策略：isolate 内缓存 + 5 秒 TTL + updateSettings 主动失效。
+ *       5 秒足够短（管理员改完最多 5 秒全量生效），
+ *       又足够把同一波并发请求合并掉，D1 压力骤降。
+ *       跨 isolate 不同步，靠 TTL 自愈（可接受，因为管理员不会每秒改设置）。
+ */
+const SETTINGS_CACHE_TTL_MS = 5_000; // 5 秒
+let _cachedSettings: Settings | null = null;
+let _cachedAt = 0;
+
+/** 主动失效缓存 —— updateSettings 后调用 */
+export function invalidateSettingsCache(): void {
+  _cachedSettings = null;
+  _cachedAt = 0;
+}
+
 /** 可调参数（均可在管理后台修改） */
 export interface Settings {
   siteTitle: string;
@@ -117,6 +137,12 @@ function toInt(v: unknown, fallback: number): number {
 }
 
 export async function getSettings(env: Env): Promise<Settings> {
+  // ① 命中内存缓存 —— 5 秒内直接返回，零 D1 开销
+  const now = Date.now();
+  if (_cachedSettings && now - _cachedAt < SETTINGS_CACHE_TTL_MS) {
+    return _cachedSettings;
+  }
+
   const { results } = await env.db.prepare(
     "SELECT key, value FROM settings"
   ).all<{ key: string; value: string }>();
@@ -126,8 +152,7 @@ export async function getSettings(env: Env): Promise<Settings> {
   // 任何调用 getSettings 的地方（下载检查、stats API、settings API、session API）
   // 都会自动得到本月正确的流量值，不再出现"上月用完→本月锁死"的死锁。
   // 此处仅修正内存返回值，DB 实际清零由后续写入操作（addTraffic / stats）自愈。
-  const now = new Date();
-  const currentMonth = now.toISOString().slice(0, 7);
+  const currentMonth = new Date().toISOString().slice(0, 7);
   const storedMonth = map.get("traffic_month") ?? "";
   let trafficUsedBytes = toInt(map.get("traffic_used_bytes"), 0);
   let trafficMonth = storedMonth;
@@ -136,7 +161,7 @@ export async function getSettings(env: Env): Promise<Settings> {
     trafficMonth = currentMonth;
   }
 
-  return {
+  const result: Settings = {
     siteTitle: map.get("site_title") ?? DEFAULT_SETTINGS.siteTitle,
     trafficLimitBytes: toInt(map.get("traffic_limit_bytes"), DEFAULT_SETTINGS.trafficLimitBytes),
     trafficUsedBytes,
@@ -168,6 +193,11 @@ export async function getSettings(env: Env): Promise<Settings> {
     codesFloatingButtonEnabled: map.get("codes_floating_button_enabled") !== "0", // 默认 true
     codesFloatingButtonPosition: (map.get("codes_floating_button_position") ?? DEFAULT_SETTINGS.codesFloatingButtonPosition) as Settings["codesFloatingButtonPosition"],
   };
+
+  // ② 写入内存缓存
+  _cachedSettings = result;
+  _cachedAt = Date.now();
+  return result;
 }
 
 /** 更新设置（仅覆盖传入的字段） */
@@ -178,6 +208,8 @@ export async function updateSettings(env: Env, patch: Partial<Record<string, str
     ).bind(key, String(value))
   );
   if (upserts.length > 0) await env.db.batch(upserts);
+  // 主动失效缓存 —— 确保后续请求立即读到新值
+  invalidateSettingsCache();
 }
 
 /**

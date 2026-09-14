@@ -165,7 +165,7 @@ let schemaReady = false;
  * （用 try/catch 保护，列已存在时静默忽略），保证老用户库升级后列补齐。
  */
 
-/** 所有增量迁移语句 —— 每次 ensureSchema 都执行一遍，幂等安全 */
+/** 所有增量迁移语句 —— 用 migration_version 追踪已执行版本，只跑未执行的 */
 const MIGRATION_STATEMENTS: string[] = [
   "ALTER TABLE shares ADD COLUMN password_hash TEXT",
   "ALTER TABLE shares ADD COLUMN password_cipher TEXT",
@@ -178,6 +178,43 @@ const MIGRATION_STATEMENTS: string[] = [
   "CREATE INDEX IF NOT EXISTS idx_shares_market ON shares(is_market, revoked)",
 ];
 
+/**
+ * 幂等迁移：读 settings.migration_version，只跑 index >= version 的迁移语句。
+ * 这样每个迁移只执行一次，避免每次请求都白跑 9 条 ALTER。
+ * migration_version 存的是"已执行到的最高下标"，默认 -1（一个都没跑过）。
+ */
+async function runMigrations(env: Env): Promise<void> {
+  let version = -1;
+  try {
+    const row: any = await env.db.prepare(
+      "SELECT value FROM settings WHERE key = 'migration_version'"
+    ).first();
+    if (row?.value) version = Number(row.value) - 1; // 存的是 len（已执行数量），转成下标
+  } catch {
+    // settings 表可能还不存在（首次部署），这时候全跑一遍
+  }
+
+  if (version >= MIGRATION_STATEMENTS.length - 1) return; // 最新
+
+  // 只跑 version+1 之后的迁移
+  for (let i = version + 1; i < MIGRATION_STATEMENTS.length; i++) {
+    try {
+      await env.db.prepare(MIGRATION_STATEMENTS[i]).run();
+    } catch {
+      /* 列/索引已存在，忽略（保持幂等兜底） */
+    }
+  }
+
+  // 写入新版本（存数量，不是下标）
+  try {
+    await env.db.prepare(
+      "INSERT INTO settings(key, value) VALUES('migration_version', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+    ).bind(String(MIGRATION_STATEMENTS.length)).run();
+  } catch {
+    /* settings 表不存在时忽略 */
+  }
+}
+
 export async function ensureSchema(env: Env): Promise<void> {
   // ① 防御性检查：如果数据库绑定不存在，直接报错
   if (!env.db) {
@@ -186,49 +223,43 @@ export async function ensureSchema(env: Env): Promise<void> {
       "或在 wrangler.jsonc 的 d1_databases 中声明。");
   }
 
-  // ② 每次都跑一遍增量迁移 —— 幂等安全（列已存在时 D1 会抛错，被 catch 住静默忽略）
-  // 这样无论老库新库、首次部署还是已跑过 CREATE TABLE，都能补齐所有新增列
-  for (const sql of MIGRATION_STATEMENTS) {
-    try {
-      await env.db.prepare(sql).run();
-    } catch {
-      /* 列/索引已存在，忽略 */
-    }
-  }
-
-  // ③ 基础表已就绪 —— 用 schemaReady 短路 CREATE TABLE
+  // ② 内存短路 —— 本 isolate 已确认过 schema + 迁移都就绪，直接返回，零成本
+  //    Worker 冷启动 / isolate 重启时 schemaReady=false，会重新跑一遍
   if (schemaReady) return;
 
-  // ④ 跨 Isolate 安全检测：用 sqlite_master 检查表是否存在
+  // ③ 跨 Isolate 安全检测：用 sqlite_master 检查表是否存在
+  let tablesExist = false;
   try {
     const row: any = await env.db.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='settings'"
     ).first();
-    if (row) {
-      schemaReady = true;
-      return;
-    }
+    tablesExist = !!row;
   } catch {
     // 查询失败（如数据库完全损坏），继续尝试建表
   }
 
-  // ⑤ 真正的建表路径（首次部署 / 库被清空时触发）
-  // 用 try/catch 处理极端竞态：另一个 Isolate 刚好也在执行 DDL
-  try {
-    await env.db.batch(SCHEMA_STATEMENTS.map((sql) => env.db.prepare(sql)));
-  } catch {
-    // 竞态兜底：可能另一个 Isolate 刚建完表。
-    // 再检测一次，确认表存在就算成功
+  if (!tablesExist) {
+    // ④ 真正的建表路径（首次部署 / 库被清空时触发）
+    // 用 try/catch 处理极端竞态：另一个 Isolate 刚好也在执行 DDL
     try {
-      const row: any = await env.db.prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='settings'"
-      ).first();
-      if (!row) throw new Error("schema still missing after DDL attempt");
-    } catch (e) {
-      // 表确实没建起来，重新抛出让上层决定
-      throw e;
+      await env.db.batch(SCHEMA_STATEMENTS.map((sql) => env.db.prepare(sql)));
+    } catch {
+      // 竞态兜底：可能另一个 Isolate 刚建完表。
+      // 再检测一次，确认表存在就算成功
+      try {
+        const row: any = await env.db.prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='settings'"
+        ).first();
+        if (!row) throw new Error("schema still missing after DDL attempt");
+      } catch (e) {
+        // 表确实没建起来，重新抛出让上层决定
+        throw e;
+      }
     }
   }
+
+  // ⑤ 跑增量迁移（幂等，只跑未执行过的）
+  await runMigrations(env);
 
   schemaReady = true;
 }
