@@ -95,6 +95,26 @@ export interface Settings {
   codesFloatingButtonEnabled: boolean;
   /** 浮动按钮位置：top-right（右上）或 top-left（左上）。默认 top-right。 */
   codesFloatingButtonPosition: "top-right" | "top-left";
+
+  // ═══════ 存储后端（R2 / S3 兼容） ═══════
+  /**
+   * 存储后端选择：
+   *   null 或 "r2"  —— 使用 Cloudflare R2 binding（默认，零配置）
+   *   "s3"          —— 使用通用 S3 兼容存储（需要配置下面所有 s3_* 字段）
+   */
+  storageProvider: "r2" | "s3" | null;
+  /** S3 endpoint，如 https://s3.amazonaws.com 或 https://oss-cn-hangzhou.aliyuncs.com */
+  s3Endpoint: string | null;
+  /** S3 region，如 us-east-1、ap-southeast-1 */
+  s3Region: string | null;
+  /** S3 bucket 名称 */
+  s3Bucket: string | null;
+  /** S3 Access Key ID（明文存） */
+  s3AccessKeyId: string | null;
+  /** S3 Secret Access Key —— 用 admin AES-GCM 加密后存 */
+  s3SecretKeyCipher: string | null;
+  /** S3 addressing style: "path"（默认）或 "virtual" */
+  s3AddressingStyle: "path" | "virtual" | null;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -129,6 +149,14 @@ export const DEFAULT_SETTINGS: Settings = {
   // 激活码浮动按钮
   codesFloatingButtonEnabled: true,
   codesFloatingButtonPosition: "top-right",
+  // 存储后端 —— 默认 R2（向后兼容）
+  storageProvider: "r2",
+  s3Endpoint: null,
+  s3Region: null,
+  s3Bucket: null,
+  s3AccessKeyId: null,
+  s3SecretKeyCipher: null,
+  s3AddressingStyle: "path",
 };
 
 function toInt(v: unknown, fallback: number): number {
@@ -192,6 +220,14 @@ export async function getSettings(env: Env): Promise<Settings> {
     // 激活码浮动按钮
     codesFloatingButtonEnabled: map.get("codes_floating_button_enabled") !== "0", // 默认 true
     codesFloatingButtonPosition: (map.get("codes_floating_button_position") ?? DEFAULT_SETTINGS.codesFloatingButtonPosition) as Settings["codesFloatingButtonPosition"],
+    // 存储后端
+    storageProvider: (map.get("storage_provider") ?? "r2") as Settings["storageProvider"],
+    s3Endpoint: map.get("s3_endpoint") ?? null,
+    s3Region: map.get("s3_region") ?? null,
+    s3Bucket: map.get("s3_bucket") ?? null,
+    s3AccessKeyId: map.get("s3_access_key_id") ?? null,
+    s3SecretKeyCipher: map.get("s3_secret_key_cipher") ?? null,
+    s3AddressingStyle: (map.get("s3_addressing_style") ?? "path") as Settings["s3AddressingStyle"],
   };
 
   // ② 写入内存缓存

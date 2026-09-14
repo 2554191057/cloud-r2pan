@@ -21,11 +21,13 @@ export function addSecurityHeaders(headers: Headers, opts: { isDownload?: boolea
     ? "default-src 'none'; style-src 'none'; script-src 'none'; frame-src 'none'; connect-src 'none'"
     : [
         "default-src 'self'",
-        "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",
-        "style-src 'self' 'unsafe-inline'",
+        // ECharts + echarts-gl 从 jsdelivr CDN 加载（用于全球分布地球仪）
+        "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com https://cdn.jsdelivr.net",
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
         "frame-src 'self' https://challenges.cloudflare.com",
         "connect-src 'self' https://challenges.cloudflare.com https://api.github.com https://api.google.com https://graph.microsoft.com https://discord.com",
-        "img-src 'self' data: https:",
+        // ECharts 需要加载世界地图 GeoJSON
+        "img-src 'self' data: https: https://cdn.jsdelivr.net",
         "form-action 'self'",
         "base-uri 'self'",
       ].join("; ");
