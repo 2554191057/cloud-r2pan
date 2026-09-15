@@ -393,21 +393,19 @@ export async function handleAdminApi(
     const marketDesc =
       typeof body.market_desc === "string" && body.market_desc.trim() ? body.market_desc.trim() : null;
     const id = randomId(10);
-    // 分享链接与直链分离 —— 各自独立 token
-    const directId = randomId(12);
     await env.db.prepare(
-      `INSERT INTO shares(id, direct_id, file_id, created_at, expires_at, max_downloads, password_hash, password_cipher, download_name, is_market, market_title, market_desc)
-       VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`
+      `INSERT INTO shares(id, file_id, created_at, expires_at, max_downloads, password_hash, password_cipher, download_name, is_market, market_title, market_desc)
+       VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`
     )
-      .bind(id, directId, body.file_id, Date.now(), expiresAt, maxDownloads, passwordHash, passwordCipher, downloadName, isMarket, marketTitle, marketDesc)
+      .bind(id, body.file_id, Date.now(), expiresAt, maxDownloads, passwordHash, passwordCipher, downloadName, isMarket, marketTitle, marketDesc)
       .run();
-    return json({ ok: true, id, direct_id: directId, url: `/s/${id}`, direct_url: `/d/${directId}` }, 201);
+    return json({ ok: true, id, url: `/s/${id}` }, 201);
   }
 
   // ── 分享列表 ──────────────────────────────────────
   if (path === "/api/admin/shares" && method === "GET") {
     const { results } = await env.db.prepare(
-      `SELECT s.id, s.direct_id, s.file_id, s.created_at, s.expires_at, s.max_downloads, s.download_count, s.revoked,
+      `SELECT s.id, s.file_id, s.created_at, s.expires_at, s.max_downloads, s.download_count, s.revoked,
               s.password_hash, s.password_cipher, s.download_name,
               s.is_market, s.market_views, s.market_title, s.market_desc,
               f.name AS file_name, f.size AS file_size, f.mime AS file_mime
@@ -415,18 +413,15 @@ export async function handleAdminApi(
        ORDER BY s.created_at DESC`
     ).all();
     const now = Date.now();
-    // 并行解密所有密码明文 + 生成直链 URL
+    // 并行解密所有密码明文
     const shares = await Promise.all(
       (results ?? []).map(async (s: any) => ({
         ...s,
         has_password: !!s.password_hash,
-        // 解密密码明文（如果有 cipher 则尝试解密）
         password_plain: s.password_cipher ? await decryptSecret(s.password_cipher, env.admin) : null,
         password_hash: undefined,
         password_cipher: undefined,
-        // 分享链接和直链分离 —— 各用各的 token
         url: `/s/${s.id}`,
-        direct_url: s.direct_id ? `/d/${s.direct_id}` : null,
         status: s.revoked
           ? "revoked"
           : s.expires_at && s.expires_at < now
@@ -777,6 +772,171 @@ export async function handleAdminApi(
     const recoveryHash = (await Promise.all(recoveryCodes.map((c) => sha256Hex(c.replace(/\s+/g, ""))))).join(",");
     await updateSettings(env, { totp_recovery_hash: recoveryHash });
     return json({ ok: true, recovery_codes: recoveryCodes });
+  }
+
+  // ══════════════════════════════════════════════════════
+  // 直链（Direct Link）CRUD —— 与分享链接完全独立
+  //   POST   /api/admin/direct-links            创建
+  //   GET    /api/admin/direct-links            列表
+  //   GET    /api/admin/direct-links/:id        详情
+  //   PUT    /api/admin/direct-links/:id        更新（过期/次数/撤销/备注）
+  //   DELETE /api/admin/direct-links/:id        删除
+  // ══════════════════════════════════════════════════════
+
+  // ── 创建直链 ──
+  if (path === "/api/admin/direct-links" && method === "POST") {
+    const body = await readJson<{
+      file_id: string;
+      expires_hours: number | null;
+      max_downloads: number | null;
+      download_name?: string | null;
+      notes?: string | null;
+    }>(req);
+    if (!body.file_id) return json({ error: msg(req, "缺少 file_id", "Missing file_id") }, 400);
+    const file = await env.db.prepare("SELECT id FROM files WHERE id = ?1").bind(body.file_id).first();
+    if (!file) return json({ error: msg(req, "文件不存在", "File not found") }, 404);
+    const expiresAt =
+      body.expires_hours && body.expires_hours > 0 ? Date.now() + body.expires_hours * 3600_000 : null;
+    const maxDownloads =
+      body.max_downloads && body.max_downloads > 0 ? Math.floor(body.max_downloads) : null;
+    const downloadName =
+      typeof body.download_name === "string" && body.download_name.trim() ? body.download_name.trim() : null;
+    const notes =
+      typeof body.notes === "string" && body.notes.trim() ? body.notes.trim().slice(0, 200) : null;
+    const id = randomId(12);
+    await env.db.prepare(
+      `INSERT INTO direct_links(id, file_id, created_at, expires_at, max_downloads, download_name, notes)
+       VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)`
+    )
+      .bind(id, body.file_id, Date.now(), expiresAt, maxDownloads, downloadName, notes)
+      .run();
+    return json({ ok: true, id, url: `/d/${id}` }, 201);
+  }
+
+  // ── 直链列表 ──
+  if (path === "/api/admin/direct-links" && method === "GET") {
+    const q = new URL(req.url).searchParams.get("q")?.trim();
+    const where = q
+      ? ` AND (f.name LIKE ?1 OR COALESCE(dl.notes,'') LIKE ?1)`
+      : "";
+    const bindVals = q ? [`%${q}%`] : [];
+    const { results } = await env.db
+      .prepare(
+        `SELECT dl.id, dl.file_id, dl.created_at, dl.expires_at, dl.max_downloads, dl.download_count, dl.revoked,
+                dl.download_name, dl.notes,
+                f.name AS file_name, f.size AS file_size, f.mime AS file_mime
+         FROM direct_links dl JOIN files f ON f.id = dl.file_id
+         WHERE 1=1 ${where}
+         ORDER BY dl.created_at DESC`
+      )
+      .all();
+    const now = Date.now();
+    const list = (results ?? []).map((dl: any) => ({
+      ...dl,
+      url: `/d/${dl.id}`,
+      status: dl.revoked
+        ? "revoked"
+        : dl.expires_at && dl.expires_at < now
+          ? "expired"
+          : dl.max_downloads && dl.download_count >= dl.max_downloads
+            ? "maxed"
+            : "active",
+    }));
+    return json({ direct_links: list });
+  }
+
+  // ── 直链详情 / 更新 / 删除 ──
+  const dlMatch = /^\/api\/admin\/direct-links\/([^/]+)$/.exec(path);
+  if (dlMatch) {
+    const dlId = dlMatch[1];
+
+    if (method === "GET") {
+      const row = await env.db
+        .prepare(
+          `SELECT dl.*, f.name AS file_name, f.size AS file_size, f.mime AS file_mime
+           FROM direct_links dl JOIN files f ON f.id = dl.file_id
+           WHERE dl.id = ?1`
+        )
+        .bind(dlId)
+        .first();
+      if (!row) return json({ error: msg(req, "直链不存在", "Direct link not found") }, 404);
+      return json({ ...row, url: `/d/${(row as any).id}` });
+    }
+
+    if (method === "PUT") {
+      const body = await readJson<{
+        expires_hours?: number | null;
+        max_downloads?: number | null;
+        download_name?: string | null;
+        notes?: string | null;
+        revoked?: boolean;
+      }>(req);
+      const row: any = await env.db.prepare("SELECT id FROM direct_links WHERE id = ?1").bind(dlId).first();
+      if (!row) return json({ error: msg(req, "直链不存在", "Direct link not found") }, 404);
+
+      const sets: string[] = [];
+      const vals: any[] = [];
+
+      if (body.expires_hours !== undefined) {
+        const exp = body.expires_hours && body.expires_hours > 0
+          ? Date.now() + body.expires_hours * 3600_000
+          : null;
+        sets.push("expires_at = ?" + (vals.length + 1));
+        vals.push(exp);
+      }
+      if (body.max_downloads !== undefined) {
+        const m = body.max_downloads && body.max_downloads > 0 ? Math.floor(body.max_downloads) : null;
+        sets.push("max_downloads = ?" + (vals.length + 1));
+        vals.push(m);
+      }
+      if (body.download_name !== undefined) {
+        const v = typeof body.download_name === "string" && body.download_name.trim()
+          ? body.download_name.trim()
+          : null;
+        sets.push("download_name = ?" + (vals.length + 1));
+        vals.push(v);
+      }
+      if (body.notes !== undefined) {
+        const v = typeof body.notes === "string" && body.notes.trim()
+          ? body.notes.trim().slice(0, 200)
+          : null;
+        sets.push("notes = ?" + (vals.length + 1));
+        vals.push(v);
+      }
+      if (typeof body.revoked === "boolean") {
+        sets.push("revoked = ?" + (vals.length + 1));
+        vals.push(body.revoked ? 1 : 0);
+      }
+
+      if (sets.length > 0) {
+        vals.push(dlId);
+        await env.db.prepare(
+          `UPDATE direct_links SET ${sets.join(", ")} WHERE id = ?${vals.length}`
+        ).bind(...vals).run();
+      }
+      return json({ ok: true });
+    }
+
+    if (method === "DELETE") {
+      // 先查出关联的 file_id 用于清理孤儿
+      const before: any = await env.db.prepare("SELECT file_id FROM direct_links WHERE id = ?1").bind(dlId).first();
+      const r = await env.db.prepare("DELETE FROM direct_links WHERE id = ?1").bind(dlId).run();
+      if ((r.meta.changes ?? 0) === 0) return json({ error: msg(req, "直链不存在", "Direct link not found") }, 404);
+      // 清理孤儿：如果该 file_id 不再被任何 shares 或 direct_links 引用，不自动删（管理员可手动清理）
+      void before;
+      return json({ ok: true });
+    }
+  }
+
+  // ── 清理失效直链 ──
+  if (path === "/api/admin/direct-links/cleanup" && method === "POST") {
+    const now = Date.now();
+    const r = await env.db.prepare(
+      `DELETE FROM direct_links WHERE revoked = 1
+        OR (expires_at IS NOT NULL AND expires_at < ?1)
+        OR (max_downloads IS NOT NULL AND download_count >= max_downloads)`
+    ).bind(now).run();
+    return json({ ok: true, deleted: r.meta.changes ?? 0 });
   }
 
   // ── 读取设置 ──────────────────────────────────────
