@@ -115,6 +115,16 @@ export interface Settings {
   s3SecretKeyCipher: string | null;
   /** S3 addressing style: "path"（默认）或 "virtual" */
   s3AddressingStyle: "path" | "virtual" | null;
+
+  // ═══════ WebDAV 支持 ═══════
+  /** 是否启用 WebDAV 服务（挂载点 /webdav/） */
+  webdavEnabled: boolean;
+  /** WebDAV Basic Auth 用户名（默认 "webdav"） */
+  webdavUsername: string;
+  /** WebDAV Basic Auth 密码哈希（salt:sha256hex） */
+  webdavPasswordHash: string | null;
+  /** WebDAV 可访问的根目录（默认 "/" = 全部文件；可设 "/shared" 等限制范围） */
+  webdavRootPath: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -157,6 +167,11 @@ export const DEFAULT_SETTINGS: Settings = {
   s3AccessKeyId: null,
   s3SecretKeyCipher: null,
   s3AddressingStyle: "path",
+  // WebDAV —— 默认关闭，启用后通过 Basic Auth 保护
+  webdavEnabled: false,
+  webdavUsername: "webdav",
+  webdavPasswordHash: null,
+  webdavRootPath: "/",
 };
 
 function toInt(v: unknown, fallback: number): number {
@@ -228,6 +243,11 @@ export async function getSettings(env: Env): Promise<Settings> {
     s3AccessKeyId: map.get("s3_access_key_id") ?? null,
     s3SecretKeyCipher: map.get("s3_secret_key_cipher") ?? null,
     s3AddressingStyle: (map.get("s3_addressing_style") ?? "path") as Settings["s3AddressingStyle"],
+    // WebDAV
+    webdavEnabled: map.get("webdav_enabled") === "1",
+    webdavUsername: map.get("webdav_username") ?? DEFAULT_SETTINGS.webdavUsername,
+    webdavPasswordHash: map.get("webdav_password_hash") ?? null,
+    webdavRootPath: map.get("webdav_root_path") ?? DEFAULT_SETTINGS.webdavRootPath,
   };
 
   // ② 写入内存缓存
