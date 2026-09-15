@@ -39,6 +39,18 @@ const SCHEMA_STATEMENTS: string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_shares_file ON shares(file_id)`,
   `CREATE INDEX IF NOT EXISTS idx_shares_market ON shares(is_market, revoked)`,
+  `CREATE TABLE IF NOT EXISTS direct_links (
+    id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER,
+    max_downloads INTEGER,
+    download_count INTEGER NOT NULL DEFAULT 0,
+    revoked INTEGER NOT NULL DEFAULT 0,
+    download_name TEXT,
+    notes TEXT
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_direct_links_file ON direct_links(file_id)`,
   `CREATE TABLE IF NOT EXISTS download_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     share_id TEXT NOT NULL,
@@ -143,6 +155,11 @@ const SCHEMA_STATEMENTS: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_codes_status ON activation_codes(status)`,
   `CREATE INDEX IF NOT EXISTS idx_codes_batch ON activation_codes(batch_id)`,
   `CREATE INDEX IF NOT EXISTS idx_codes_code ON activation_codes(code)`,
+  // ═══════════ WebDAV 虚拟目录 ═══════════
+  `CREATE TABLE IF NOT EXISTS directories (
+    path TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL
+  )`,
 ];
 
 let schemaReady = false;
@@ -176,6 +193,9 @@ const MIGRATION_STATEMENTS: string[] = [
   "ALTER TABLE shares ADD COLUMN market_title TEXT",
   "ALTER TABLE shares ADD COLUMN market_desc TEXT",
   "CREATE INDEX IF NOT EXISTS idx_shares_market ON shares(is_market, revoked)",
+  // ═══════════ WebDAV 虚拟目录 ═══════════
+  "ALTER TABLE files ADD COLUMN path TEXT NOT NULL DEFAULT '/'",
+  "CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)",
 ];
 
 /**

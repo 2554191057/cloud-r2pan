@@ -1,4 +1,4 @@
-import type { Env, ShareWithFile } from "./types";
+import type { Env, ShareWithFile, DirectLinkWithFile } from "./types";
 import { getSettings, addTraffic } from "./settings";
 import { parseUA } from "./ua";
 import { clientIp, isAdminWhitelisted } from "./auth";
@@ -214,8 +214,6 @@ export async function handleShareInfo(req: Request, env: Env, token: string): Pr
     max_downloads: row.max_downloads,
     needs_password: !!row.password_hash,
     quota_exceeded: quotaExceeded,
-    // 直链：/d/{id} —— 跳过 HTML 页面直接进入下载流程
-    direct_download_url: `/d/${token}`,
     site_title: settings.siteTitle,
     turnstile: {
       enabled,
@@ -247,6 +245,18 @@ async function getShare(env: Env, token: string): Promise<ShareWithFile | null> 
   )
     .bind(token)
     .first<ShareWithFile>();
+}
+
+/** 从 direct_links 表查直链记录（独立表、独立 token） */
+async function getDirectLink(env: Env, token: string): Promise<DirectLinkWithFile | null> {
+  return await env.db.prepare(
+    `SELECT dl.id, dl.file_id, dl.created_at, dl.expires_at, dl.max_downloads, dl.download_count, dl.revoked,
+            dl.download_name, f.key, f.name, f.size, f.mime
+     FROM direct_links dl JOIN files f ON f.id = dl.file_id
+     WHERE dl.id = ?1`
+  )
+    .bind(token)
+    .first<DirectLinkWithFile>();
 }
 
 /** POST /s/:token/verify —— 校验分享密码 + 可选 Turnstile，成功后颁发下载令牌 */
@@ -282,7 +292,10 @@ export async function handleVerify(req: Request, env: Env, token: string): Promi
   return json({ ok: true, url: `/s/${token}/download?t=${ticket}` });
 }
 
-/** GET /s/:token/download —— 下载主流程：封禁检查 → 有效性检查 → 流量限额 → 重复下载封禁 → 流式输出 */
+/**
+ * GET /s/:token/download —— 分享链接下载主流程
+ * 走 shares 表，带完整鉴权链（密码/过期/次数/流量/Turnstile/OAuth/重复下载）
+ */
 export async function handleDownload(
   req: Request,
   env: Env,
@@ -294,28 +307,17 @@ export async function handleDownload(
   const country = req.headers.get("cf-ipcountry") ?? "";
   const settings = await getSettings(env);
 
-  // ══ 解析激活码 ══
-  // 支持两种形式：URL 参数 ?code=XXX 或查询串中带 code=（cookie/localStorage 同步过来）
   const urlCode = new URL(req.url).searchParams.get("code");
   const headerCode = req.headers.get("x-activation-code");
   const activationCode = (urlCode || headerCode || "").trim().toUpperCase() || null;
 
-  // ═════════════════════════════════════════════════════════════════
-  // 【并行化】激活码查询 + 封禁查询 + 分享查询，互不依赖，用 Promise.all
-  // 节省 1-2 次 D1 RTT 时间（取决于哪个慢）
-  // ═════════════════════════════════════════════════════════════════
   const [codeRow, ban, row] = await Promise.all([
-    // 激活码查询（没有码就跳过）
     activationCode ? findCodeByString(env, activationCode) : Promise.resolve(null),
-    // 封禁检查
-    env.db.prepare(
-      "SELECT reason, expires_at FROM banned_ips WHERE ip = ?1"
-    ).bind(ip).first<{ reason: string | null; expires_at: number | null }>(),
-    // 分享元数据查询
+    env.db.prepare("SELECT reason, expires_at FROM banned_ips WHERE ip = ?1")
+      .bind(ip).first<{ reason: string | null; expires_at: number | null }>(),
     getShare(env, token),
   ]);
 
-  // ══ 激活码校验 ══
   if (activationCode && codeRow) {
     const check = checkCodeUsable(codeRow as any);
     if (!check.ok) {
@@ -324,233 +326,247 @@ export async function handleDownload(
       if (reason === "exhausted") title = "激活码流量已耗尽";
       if (reason === "expired") title = "激活码已过期";
       if (reason === "revoked") title = "激活码已作废";
-      return errorPage(
-        req,
-        403,
+      return errorPage(req, 403,
         { zh: title, en: "Activation Code Unavailable" },
         { zh: check.message || reason || "该激活码不可用", en: check.message || "This activation code is not available" },
-        { siteTitle: settings.siteTitle }
-      );
+        { siteTitle: settings.siteTitle });
     }
-    // 码可用 → 首次使用时置为 active（不阻塞，后台异步）
     activateCodeIfNeeded(env, codeRow!).catch(() => {});
   }
 
-  // ══ 封禁检查（过期自动解封） ══
   if (ban) {
     if (ban.expires_at && ban.expires_at < Date.now()) {
       env.db.prepare("DELETE FROM banned_ips WHERE ip = ?1").bind(ip).run().catch(() => {});
     } else {
-      return errorPage(
-        req,
-        403,
-        { zh: "访问已被封禁", en: "Access Banned" },
-        {
-          zh: ban.reason || "由于重复下载行为，该 IP 已被暂时封禁。",
-          en: ban.reason || "This IP has been temporarily banned due to repeated download behavior.",
-        }
-      );
+      return errorPage(req, 403, { zh: "访问已被封禁", en: "Access Banned" },
+        { zh: ban.reason || "由于重复下载行为，该 IP 已被暂时封禁。", en: ban.reason || "This IP has been temporarily banned." });
     }
   }
 
-  // ══ 分享有效性 ══
-  if (!row)
-    return errorPage(
-      req,
-      404,
-      { zh: "链接不存在", en: "Link Not Found" },
-      { zh: "该分享链接无效，或已被管理员删除。", en: "This share link is invalid or has been removed." }
-    );
-  if (row.revoked)
-    return errorPage(
-      req,
-      410,
-      { zh: "链接已失效", en: "Link Revoked" },
-      { zh: "该分享已被管理员撤销。", en: "This share has been revoked by the administrator." }
-    );
-  if (row.expires_at && row.expires_at < Date.now())
-    return errorPage(
-      req,
-      410,
-      { zh: "链接已过期", en: "Link Expired" },
-      { zh: "该分享已超过有效期，无法继续下载。", en: "This share has expired and is no longer available." }
-    );
-  if (row.max_downloads && row.download_count >= row.max_downloads)
-    return errorPage(
-      req,
-      410,
-      { zh: "下载次数已达上限", en: "Download Limit Reached" },
-      {
-        zh: `该资源允许下载 ${row.max_downloads} 次，名额已用完。`,
-        en: `This resource allows ${row.max_downloads} downloads and the quota is used up.`,
-      }
-    );
+  if (!row) return errorPage(req, 404, { zh: "链接不存在", en: "Link Not Found" },
+    { zh: "该分享链接无效，或已被管理员删除。", en: "This share link is invalid or has been removed." });
+  if (row.revoked) return errorPage(req, 410, { zh: "链接已失效", en: "Link Revoked" },
+    { zh: "该分享已被管理员撤销。", en: "This share has been revoked." });
+  if (row.expires_at && row.expires_at < Date.now()) return errorPage(req, 410, { zh: "链接已过期", en: "Link Expired" },
+    { zh: "该分享已超过有效期。", en: "This share has expired." });
+  if (row.max_downloads && row.download_count >= row.max_downloads) return errorPage(req, 410, { zh: "下载次数已达上限", en: "Download Limit Reached" },
+    { zh: `该资源允许下载 ${row.max_downloads} 次，名额已用完。`, en: `Download limit (${row.max_downloads}) reached.` });
 
-  // 🔴 Bug A 修复：主流程原子扣减下载次数 —— 超卖拦截
-  //
-  // 原实现在 L175 用 row.download_count（旧值）拦截，计数更新在 waitUntil 里，
-  // 响应发出后才 +1 → 并发 20 个请求全过，max=3 形同虚设。
-  //
-  // 修复：把 UPDATE 挪到主流程、R2 读取之前，用 SQL 条件原子完成：
-  //   UPDATE shares SET download_count = download_count + 1
-  //   WHERE id = ? AND (max_downloads IS NULL OR download_count < max_downloads)
-  // changes = 0  → 已达上限，拦截
-  // changes = 1  → 原子成功，继续读取 R2
   if (row.max_downloads) {
-    const r = await env.db
-      .prepare(
-        `UPDATE shares SET download_count = download_count + 1
-         WHERE id = ?1 AND download_count < ?2`
-      )
-      .bind(token, row.max_downloads)
-      .run();
-    if ((r.meta.changes ?? 0) === 0) {
-      return errorPage(
-        req,
-        410,
-        { zh: "下载次数已达上限", en: "Download Limit Reached" },
-        {
-          zh: `该资源允许下载 ${row.max_downloads} 次，名额已用完。`,
-          en: `This resource allows ${row.max_downloads} downloads and the quota is used up.`,
-        }
-      );
-    }
+    const r = await env.db.prepare(
+      `UPDATE shares SET download_count = download_count + 1 WHERE id = ?1 AND download_count < ?2`
+    ).bind(token, row.max_downloads).run();
+    if ((r.meta.changes ?? 0) === 0)
+      return errorPage(req, 410, { zh: "下载次数已达上限", en: "Download Limit Reached" },
+        { zh: `名额已用完。`, en: `Quota used up.` });
   }
 
-  // 2.5 密码校验：需先解锁（POST /s/:token/verify 获取授权令牌）
   if (row.password_hash && !(await verifyShareToken(env, token, new URL(req.url).search))) {
-    return errorPage(
-      req,
-      403,
-      { zh: "需要访问密码", en: "Password Required" },
-      { zh: "该分享受密码保护，请输入访问密码后再下载。", en: "This share is password-protected. Enter the access password to download." }
-    );
+    return errorPage(req, 403, { zh: "需要访问密码", en: "Password Required" },
+      { zh: "该分享受密码保护。", en: "This share is password-protected." });
   }
 
-  // 2.6 OAuth2 下载鉴权
   if (settings.oauthEnabled) {
     const oauthResult = await verifyOAuthSession(env, req.headers.get("cookie"));
     if (!oauthResult.ok) {
       const providerName = settings.oauthProvider === "custom" ? "OAuth" : settings.oauthProvider;
       const startUrl = `/oauth/start?provider=${encodeURIComponent(settings.oauthProvider)}&redirect=${encodeURIComponent("/s/" + token)}`;
-      return errorPage(
-        req,
-        401,
-        { zh: "需要登录", en: "OAuth Login Required" },
-        {
-          zh: `该资源需要通过 ${providerName} 账号登录后才能下载。`,
-          en: `This resource requires login with ${providerName} to download.`,
-        },
-        {
-          siteTitle: settings.siteTitle,
-          oauth_login_url: startUrl,
-        }
-      );
+      return errorPage(req, 401, { zh: "需要登录", en: "OAuth Login Required" },
+        { zh: `该资源需要通过 ${providerName} 账号登录后才能下载。`, en: `This resource requires ${providerName} login.` },
+        { siteTitle: settings.siteTitle, oauth_login_url: startUrl });
     }
   }
 
-  // 2.7 Turnstile 下载验证码（on_download / both 模式）
   if (await isTurnstileEnabled(env, settings)) {
     const url = new URL(req.url);
     const mode = settings.turnstileMode;
     const downloadGate = mode === "on_download" || mode === "both";
     if (downloadGate) {
       const turnstileToken = url.searchParams.get("cf");
-      // on_download 模式下：没传 token → 弹 Turnstile
-      // both 模式下：token 必须已由 verify 阶段校验，这里只是双重兜底
       if (!turnstileToken) {
-        return errorPage(
-          req,
-          403,
-          { zh: "需要验证码", en: "Turnstile Required" },
-          {
-            zh: "点击下载前需要先通过人机验证。请刷新页面重试。",
-            en: "Please complete the human verification before downloading. Refresh and try again.",
-          },
-          { siteTitle: settings.siteTitle }
-        );
+        return errorPage(req, 403, { zh: "需要验证码", en: "Turnstile Required" },
+          { zh: "请先通过人机验证。", en: "Please complete human verification." },
+          { siteTitle: settings.siteTitle });
       }
       const pass = await verifyTurnstileToken(env, settings, turnstileToken, ip);
       if (!pass) {
-        return errorPage(
-          req,
-          403,
-          { zh: "验证码校验失败", en: "Turnstile Failed" },
-          { zh: "人机验证未通过，请刷新页面重试。", en: "Human verification failed. Please refresh and try again." },
-          { siteTitle: settings.siteTitle }
-        );
+        return errorPage(req, 403, { zh: "验证码校验失败", en: "Turnstile Failed" },
+          { zh: "人机验证未通过。", en: "Human verification failed." },
+          { siteTitle: settings.siteTitle });
       }
     }
   }
 
-  // 3. 流量限额：达到预设上限立即暂停所有下载（防止流量超额扣费）
-  //    白名单 IP 和 使用激活码的下载不受此限制（激活码有独立额度）
   {
     const whitelisted = isAdminWhitelisted(ip, settings.adminIps);
     const usingCode = !!codeRow;
     if (!whitelisted && !usingCode && settings.trafficLimitBytes > 0 && settings.trafficUsedBytes >= settings.trafficLimitBytes) {
-      return errorPage(
-        req,
-        503,
-        { zh: "下载已暂停", en: "Downloads Paused" },
-        {
-          zh: "本月流量已达预设限额，为避免产生额外费用，下载服务已自动暂停。请联系管理员调整限额或重置流量。",
-          en: "The monthly traffic quota has been reached. To avoid extra charges, downloads are automatically paused. Please contact the administrator to raise the quota or reset traffic.",
-        },
-        { siteTitle: settings.siteTitle }
-      );
+      return errorPage(req, 503, { zh: "下载已暂停", en: "Downloads Paused" },
+        { zh: "本月流量已达预设限额。", en: "Monthly traffic quota reached." },
+        { siteTitle: settings.siteTitle });
     }
   }
 
-  // 4. 单 IP 重复下载检查 + 自动封禁
-  //    白名单 IP 和 使用激活码的下载不受此限制（和步骤 3 豁免保持一致）
   {
     const whitelisted = isAdminWhitelisted(ip, settings.adminIps);
     const usingCode = !!codeRow;
     if (!whitelisted && !usingCode && settings.maxDownloadsPerIp > 0) {
-      const since =
-        settings.countWindowHours > 0 ? Date.now() - settings.countWindowHours * 3600_000 : 0;
-      const { c } =
-        (await env.db.prepare(
-          "SELECT COUNT(*) AS c FROM download_logs WHERE share_id = ?1 AND ip = ?2 AND created_at > ?3"
-        )
-          .bind(token, ip, since)
-          .first<{ c: number }>()) ?? { c: 0 };
+      const since = settings.countWindowHours > 0 ? Date.now() - settings.countWindowHours * 3600_000 : 0;
+      const { c } = (await env.db.prepare(
+        "SELECT COUNT(*) AS c FROM download_logs WHERE share_id = ?1 AND ip = ?2 AND created_at > ?3"
+      ).bind(token, ip, since).first<{ c: number }>()) ?? { c: 0 };
       if (c >= settings.maxDownloadsPerIp) {
         if (settings.autoBan) {
-          const expiresAt =
-            settings.banHours > 0 ? Date.now() + settings.banHours * 3600_000 : null;
+          const expiresAt = settings.banHours > 0 ? Date.now() + settings.banHours * 3600_000 : null;
           await env.db.prepare(
             `INSERT INTO banned_ips(ip, reason, banned_at, expires_at) VALUES(?1, ?2, ?3, ?4)
              ON CONFLICT(ip) DO UPDATE SET reason = excluded.reason, banned_at = excluded.banned_at, expires_at = excluded.expires_at`
-          )
-            .bind(
-              ip,
-              `重复下载「${row.name}」超过 ${settings.maxDownloadsPerIp} 次`,
-              Date.now(),
-              expiresAt
-            )
-            .run();
+          ).bind(ip, `重复下载「${row.name}」超过 ${settings.maxDownloadsPerIp} 次`, Date.now(), expiresAt).run();
         }
-        return errorPage(
-          req,
-          403,
-          { zh: "重复下载被拦截", en: "Duplicate Download Blocked" },
-          {
-            zh:
-              `同一 IP 在统计窗口内下载此资源的次数已达上限（${settings.maxDownloadsPerIp} 次）。` +
-              (settings.autoBan ? "该 IP 已被自动封禁。" : ""),
-            en:
-              `This IP has reached the download limit for this resource within the counting window (${settings.maxDownloadsPerIp}).` +
-              (settings.autoBan ? " The IP has been automatically banned." : ""),
-          },
-          { siteTitle: settings.siteTitle }
-        );
+        return errorPage(req, 403, { zh: "重复下载被拦截", en: "Duplicate Download Blocked" },
+          { zh: `同一 IP 在统计窗口内下载此资源的次数已达上限（${settings.maxDownloadsPerIp} 次）。`,
+            en: `This IP has reached the download limit (${settings.maxDownloadsPerIp}).` },
+          { siteTitle: settings.siteTitle });
       }
     }
   }
 
-  // 5. 从存储后端读取（支持断点续传 Range）
+  return streamFile(req, env, ctx, row, token, "share");
+}
+
+/**
+ * GET /d/:id —— 直链下载（独立入口，走 direct_links 表）
+ * 轻量鉴权：封禁 → 过期/撤销/次数 → 原子扣次 → 流量限额 → 重复下载
+ * 不走密码/Turnstile/OAuth（直链设计就是"拿了就能下"）
+ */
+export async function handleDirectDownload(
+  req: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  token: string
+): Promise<Response> {
+  const ip = clientIp(req);
+  const ua = req.headers.get("user-agent") ?? "";
+  const country = req.headers.get("cf-ipcountry") ?? "";
+  const settings = await getSettings(env);
+
+  const urlCode = new URL(req.url).searchParams.get("code");
+  const headerCode = req.headers.get("x-activation-code");
+  const activationCode = (urlCode || headerCode || "").trim().toUpperCase() || null;
+
+  const [codeRow, ban, row] = await Promise.all([
+    activationCode ? findCodeByString(env, activationCode) : Promise.resolve(null),
+    env.db.prepare("SELECT reason, expires_at FROM banned_ips WHERE ip = ?1")
+      .bind(ip).first<{ reason: string | null; expires_at: number | null }>(),
+    getDirectLink(env, token),
+  ]);
+
+  if (activationCode && codeRow) {
+    const check = checkCodeUsable(codeRow as any);
+    if (!check.ok) {
+      return errorPage(req, 403,
+        { zh: "激活码不可用", en: "Activation Code Unavailable" },
+        { zh: check.message || check.reason || "该激活码不可用", en: check.message || "This activation code is not available" },
+        { siteTitle: settings.siteTitle });
+    }
+    activateCodeIfNeeded(env, codeRow!).catch(() => {});
+  }
+
+  if (ban) {
+    if (ban.expires_at && ban.expires_at < Date.now()) {
+      env.db.prepare("DELETE FROM banned_ips WHERE ip = ?1").bind(ip).run().catch(() => {});
+    } else {
+      return errorPage(req, 403, { zh: "访问已被封禁", en: "Access Banned" },
+        { zh: ban.reason || "该 IP 已被暂时封禁。", en: ban.reason || "This IP has been banned." });
+    }
+  }
+
+  if (!row) return errorPage(req, 404, { zh: "直链不存在", en: "Not Found" },
+    { zh: "该直链无效或已被管理员删除。", en: "Direct link invalid or removed." });
+  if (row.revoked) return errorPage(req, 410, { zh: "直链已失效", en: "Link Revoked" },
+    { zh: "该直链已被撤销。", en: "Direct link revoked." });
+  if (row.expires_at && row.expires_at < Date.now()) return errorPage(req, 410, { zh: "直链已过期", en: "Link Expired" },
+    { zh: "该直链已超过有效期。", en: "Direct link expired." });
+  if (row.max_downloads && row.download_count >= row.max_downloads) return errorPage(req, 410, { zh: "下载次数已达上限", en: "Download Limit Reached" },
+    { zh: `名额已用完。`, en: `Quota used up.` });
+
+  if (row.max_downloads) {
+    const r = await env.db.prepare(
+      `UPDATE direct_links SET download_count = download_count + 1 WHERE id = ?1 AND download_count < ?2`
+    ).bind(token, row.max_downloads).run();
+    if ((r.meta.changes ?? 0) === 0)
+      return errorPage(req, 410, { zh: "下载次数已达上限", en: "Download Limit Reached" },
+        { zh: `名额已用完。`, en: `Quota used up.` });
+  }
+
+  {
+    const whitelisted = isAdminWhitelisted(ip, settings.adminIps);
+    const usingCode = !!codeRow;
+    if (!whitelisted && !usingCode && settings.trafficLimitBytes > 0 && settings.trafficUsedBytes >= settings.trafficLimitBytes) {
+      return errorPage(req, 503, { zh: "下载已暂停", en: "Downloads Paused" },
+        { zh: "本月流量已达预设限额。", en: "Monthly traffic quota reached." },
+        { siteTitle: settings.siteTitle });
+    }
+  }
+
+  {
+    const whitelisted = isAdminWhitelisted(ip, settings.adminIps);
+    const usingCode = !!codeRow;
+    if (!whitelisted && !usingCode && settings.maxDownloadsPerIp > 0) {
+      const since = settings.countWindowHours > 0 ? Date.now() - settings.countWindowHours * 3600_000 : 0;
+      const { c } = (await env.db.prepare(
+        "SELECT COUNT(*) AS c FROM download_logs WHERE share_id = ?1 AND ip = ?2 AND created_at > ?3"
+      ).bind(token, ip, since).first<{ c: number }>()) ?? { c: 0 };
+      if (c >= settings.maxDownloadsPerIp) {
+        if (settings.autoBan) {
+          const expiresAt = settings.banHours > 0 ? Date.now() + settings.banHours * 3600_000 : null;
+          await env.db.prepare(
+            `INSERT INTO banned_ips(ip, reason, banned_at, expires_at) VALUES(?1, ?2, ?3, ?4)
+             ON CONFLICT(ip) DO UPDATE SET reason = excluded.reason, banned_at = excluded.banned_at, expires_at = excluded.expires_at`
+          ).bind(ip, `重复下载直链「${row.name}」超过 ${settings.maxDownloadsPerIp} 次`, Date.now(), expiresAt).run();
+        }
+        return errorPage(req, 403, { zh: "重复下载被拦截", en: "Duplicate Download Blocked" },
+          { zh: `同一 IP 在统计窗口内下载此资源的次数已达上限。`, en: `IP download limit reached.` },
+          { siteTitle: settings.siteTitle });
+      }
+    }
+  }
+
+  return streamFile(req, env, ctx, row, token, "direct");
+}
+
+/* ════════════════════════════════════════════════════════════════════
+ * streamFile —— 共享的"从存储后端读取 → 流式输出 → 后台记日志"逻辑
+ * handleDownload（分享链接）和 handleDirectDownload（直链）共用此函数
+ * ════════════════════════════════════════════════════════════════════ */
+
+interface StreamFileRow {
+  file_id: string;
+  key: string;
+  name: string;
+  size: number;
+  mime: string;
+  download_name?: string | null;
+}
+
+async function streamFile(
+  req: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  row: StreamFileRow,
+  token: string,
+  kind: "share" | "direct"
+): Promise<Response> {
+  const ip = clientIp(req);
+  const ua = req.headers.get("user-agent") ?? "";
+  const country = req.headers.get("cf-ipcountry") ?? "";
+  const settings = await getSettings(env);
+
+  const urlCode = new URL(req.url).searchParams.get("code");
+  const headerCode = req.headers.get("x-activation-code");
+  const activationCode = (urlCode || headerCode || "").trim().toUpperCase() || null;
+  const codeRow = activationCode ? await findCodeByString(env, activationCode) : null;
+
   const range = parseRange(req.headers.get("range"), row.size);
   let obj;
   try {
@@ -558,82 +574,59 @@ export async function handleDownload(
     obj = await st.get(row.key, range ? { offset: range.offset, length: range.length } : undefined);
   } catch (err: any) {
     console.error("[download] storage error:", err);
-    return errorPage(
-      req,
-      502,
-      { zh: "存储服务错误", en: "Storage Error" },
-      { zh: "无法从存储后端读取文件，请稍后重试。", en: "Cannot read file from storage. Please try again later." }
-    );
+    return errorPage(req, 502, { zh: "存储服务错误", en: "Storage Error" },
+      { zh: "无法从存储后端读取文件。", en: "Cannot read file from storage." });
   }
   if (!obj)
-    return errorPage(
-      req,
-      404,
-      { zh: "文件不存在", en: "File Not Found" },
-      { zh: "文件可能已被删除，请联系管理员。", en: "The file may have been deleted. Please contact the administrator." }
-    );
+    return errorPage(req, 404, { zh: "文件不存在", en: "File Not Found" },
+      { zh: "文件可能已被删除。", en: "File may have been deleted." });
 
   const headers = new Headers();
   headers.set("content-type", obj.contentType);
   headers.set("etag", obj.etag);
   headers.set("accept-ranges", "bytes");
   headers.set("cache-control", "no-store");
-  const displayName = (row as any).download_name || row.name;
+  const displayName = row.download_name || row.name;
   headers.set("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(displayName)}`);
-  // 安全头：下载响应禁止浏览器渲染任何内容
   const { addSecurityHeaders } = await import("./pages");
   addSecurityHeaders(headers, { isDownload: true });
-  // 注意: Storage provider 返回的 size：有 range 时是分片后的长度，无 range 时是整个对象大小
   const servedLen = range ? range.length : obj.size;
   headers.set("content-length", String(servedLen));
   if (range) {
     headers.set("content-range", `bytes ${range.offset}-${range.offset + servedLen - 1}/${row.size}`);
   }
 
-  // 6. 后台记录：下载日志 + 流量 + 激活码额度扣减 + Analytics Engine
+  // 后台记录
   const bytes = servedLen;
   const codeId = codeRow ? codeRow.code : null;
   ctx.waitUntil(
     (async () => {
       const { browser, os } = parseUA(ua);
 
-      // ── Workers Analytics Engine 写入（可选，绑定后自动记录） ──
-      // 写入是 fire-and-forget 的，不影响请求延迟。
-      // blobs 列: country, file_name, browser, os, share_id, ip_hash, has_code
-      // doubles 列: bytes, download_count 占位
-      // 注意：ip 不直接写入，只写 country + 可选经纬度（Cloudflare CF-IPLatitude/IPLongitude 头）
       if (env.analytics) {
         try {
           const latitude = req.headers.get("cf-ip-latitude") ?? "";
           const longitude = req.headers.get("cf-ip-longitude") ?? "";
           env.analytics.writeDataPoint({
             blobs: [
-              country,              // blob1: 国家代码（US/CN/JP/..）
-              row.name,             // blob2: 文件名
-              browser,              // blob3: 浏览器
-              os,                   // blob4: 操作系统
-              token,                // blob5: share_id
-              codeId ?? "none",     // blob6: 激活码（如果有）
-              latitude,             // blob7: 纬度（CF 头提供）
-              longitude,            // blob8: 经度
-              settings.storageProvider || "r2", // blob9: 存储后端
+              country, row.name, browser, os, token,
+              codeId ?? "none", latitude, longitude,
+              settings.storageProvider || "r2",
             ],
-            doubles: [bytes, 1],      // double1: 字节数，double2: 下载计数（恒为1）
-            indexes: [token],          // 采样 key：share_id
+            doubles: [bytes, 1],
+            indexes: [token],
           });
-        } catch {
-          // Analytics Engine 写入失败不应影响下载流程，静默忽略
-        }
+        } catch { /* ignore */ }
       }
 
       await env.db.prepare(
         `INSERT INTO download_logs(share_id, file_id, file_name, ip, ua, browser, os, country, bytes, created_at, activation_code)
          VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`
       )
+        // 直链也记 download_logs —— share_id 字段存 direct link token 方便追踪
         .bind(token, row.file_id, row.name, ip, ua.slice(0, 500), browser, os, country, bytes, Date.now(), codeId)
         .run();
       await addTraffic(env, bytes);
-      // 激活码额度扣减（如果这次下载用了码）
       if (codeRow) {
         const dr = await deductQuota(env, codeRow, bytes);
         if (!dr.ok) {

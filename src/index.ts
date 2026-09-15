@@ -1,7 +1,7 @@
 import type { Env } from "./types";
 import { ensureSchema } from "./db";
 import { handleAdminApi } from "./admin";
-import { handleDownload, handleShareInfo, handleVerify } from "./public";
+import { handleDownload, handleDirectDownload, handleShareInfo, handleVerify } from "./public";
 import { serveAdminPage, serveSharePage, serveMarketPage, errorPage } from "./pages";
 import {
   handleOAuthStart,
@@ -260,9 +260,9 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   }
 
   // ══════════════════════════════════════════════════════════════
-  // 直链 /d/:token —— 直接进入下载流程，无 HTML 中间页
-  // 等价于 /s/:token/download 的短路径 alias。
-  // 有密码保护的分享仍需先通过 POST /s/:token/verify 拿到令牌
+  // 直链 /d/:id —— 独立入口，走 direct_links 表
+  // 与分享链接 /s/:id 是完全独立的 API、独立的 token、独立的鉴权
+  // 创建直链: POST /api/admin/direct-links
   // ══════════════════════════════════════════════════════════════
   const directMatch = /^\/d\/([A-Za-z0-9]+)$/.exec(path);
   if (directMatch) {
@@ -270,7 +270,17 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
       return new Response("Method Not Allowed", { status: 405 });
     }
     await ensureSchema(env);
-    return handleDownload(req, env, ctx, directMatch[1]);
+    return handleDirectDownload(req, env, ctx, directMatch[1]);
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // WebDAV 服务 —— 挂载点 /webdav/*
+  // 通过 HTTP Basic Auth 保护，启用后可在 Finder/Explorer 等直接挂载
+  // ══════════════════════════════════════════════════════════════
+  if (path.startsWith("/webdav")) {
+    await ensureSchema(env);
+    const { handleWebDAV } = await import("./webdav");
+    return handleWebDAV(req, env, ctx);
   }
 
   return notFound(req);

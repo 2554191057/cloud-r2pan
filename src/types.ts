@@ -17,6 +17,7 @@ export interface Env {
 }
 
 export interface ShareRow {
+  /** 分享链接 token（/s/:id） */
   id: string;
   file_id: string;
   created_at: number;
@@ -36,6 +37,33 @@ export interface ShareRow {
   market_desc?: string | null;
 }
 
+/**
+ * 直链 —— 与分享链接独立的独立表
+ * 通过 POST /api/admin/direct-links 独立创建
+ * 路由: /d/:id
+ */
+export interface DirectLinkRow {
+  /** 直链 token（/d/:id） */
+  id: string;
+  file_id: string;
+  created_at: number;
+  expires_at: number | null;
+  max_downloads: number | null;
+  download_count: number;
+  revoked: number;
+  /** 可选下载文件名覆盖 */
+  download_name: string | null;
+  /** 管理员备注 */
+  notes: string | null;
+}
+
+export interface DirectLinkWithFile extends DirectLinkRow {
+  key: string;
+  name: string;
+  size: number;
+  mime: string;
+}
+
 export interface FileRow {
   id: string;
   key: string;
@@ -43,6 +71,8 @@ export interface FileRow {
   size: number;
   mime: string;
   uploaded_at: number;
+  /** 虚拟目录路径，根目录为 "/" */
+  path?: string;
 }
 
 export interface ShareWithFile extends ShareRow {
