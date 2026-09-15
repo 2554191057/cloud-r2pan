@@ -17,7 +17,10 @@ export interface Env {
 }
 
 export interface ShareRow {
+  /** 分享链接 token（/s/:id） */
   id: string;
+  /** 直链独立 token（/d/:direct_id），与 id 分离 */
+  direct_id?: string | null;
   file_id: string;
   created_at: number;
   expires_at: number | null;
@@ -43,6 +46,8 @@ export interface FileRow {
   size: number;
   mime: string;
   uploaded_at: number;
+  /** 虚拟目录路径，根目录为 "/" */
+  path?: string;
 }
 
 export interface ShareWithFile extends ShareRow {

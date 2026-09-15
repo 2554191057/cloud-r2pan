@@ -260,8 +260,8 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   }
 
   // ══════════════════════════════════════════════════════════════
-  // 直链 /d/:token —— 直接进入下载流程，无 HTML 中间页
-  // 等价于 /s/:token/download 的短路径 alias。
+  // 直链 /d/:direct_id —— 直接进入下载流程，无 HTML 中间页
+  // 与分享链接分离：用独立的 direct_id 查，而非 share id
   // 有密码保护的分享仍需先通过 POST /s/:token/verify 拿到令牌
   // ══════════════════════════════════════════════════════════════
   const directMatch = /^\/d\/([A-Za-z0-9]+)$/.exec(path);
@@ -270,7 +270,17 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
       return new Response("Method Not Allowed", { status: 405 });
     }
     await ensureSchema(env);
-    return handleDownload(req, env, ctx, directMatch[1]);
+    return handleDownload(req, env, ctx, directMatch[1], "direct");
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // WebDAV 服务 —— 挂载点 /webdav/*
+  // 通过 HTTP Basic Auth 保护，启用后可在 Finder/Explorer 等直接挂载
+  // ══════════════════════════════════════════════════════════════
+  if (path.startsWith("/webdav")) {
+    await ensureSchema(env);
+    const { handleWebDAV } = await import("./webdav");
+    return handleWebDAV(req, env, ctx);
   }
 
   return notFound(req);

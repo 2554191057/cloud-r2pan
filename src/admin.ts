@@ -393,19 +393,21 @@ export async function handleAdminApi(
     const marketDesc =
       typeof body.market_desc === "string" && body.market_desc.trim() ? body.market_desc.trim() : null;
     const id = randomId(10);
+    // 分享链接与直链分离 —— 各自独立 token
+    const directId = randomId(12);
     await env.db.prepare(
-      `INSERT INTO shares(id, file_id, created_at, expires_at, max_downloads, password_hash, password_cipher, download_name, is_market, market_title, market_desc)
-       VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`
+      `INSERT INTO shares(id, direct_id, file_id, created_at, expires_at, max_downloads, password_hash, password_cipher, download_name, is_market, market_title, market_desc)
+       VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`
     )
-      .bind(id, body.file_id, Date.now(), expiresAt, maxDownloads, passwordHash, passwordCipher, downloadName, isMarket, marketTitle, marketDesc)
+      .bind(id, directId, body.file_id, Date.now(), expiresAt, maxDownloads, passwordHash, passwordCipher, downloadName, isMarket, marketTitle, marketDesc)
       .run();
-    return json({ ok: true, id, url: `/s/${id}`, direct_url: `/d/${id}` }, 201);
+    return json({ ok: true, id, direct_id: directId, url: `/s/${id}`, direct_url: `/d/${directId}` }, 201);
   }
 
   // ── 分享列表 ──────────────────────────────────────
   if (path === "/api/admin/shares" && method === "GET") {
     const { results } = await env.db.prepare(
-      `SELECT s.id, s.file_id, s.created_at, s.expires_at, s.max_downloads, s.download_count, s.revoked,
+      `SELECT s.id, s.direct_id, s.file_id, s.created_at, s.expires_at, s.max_downloads, s.download_count, s.revoked,
               s.password_hash, s.password_cipher, s.download_name,
               s.is_market, s.market_views, s.market_title, s.market_desc,
               f.name AS file_name, f.size AS file_size, f.mime AS file_mime
@@ -422,8 +424,9 @@ export async function handleAdminApi(
         password_plain: s.password_cipher ? await decryptSecret(s.password_cipher, env.admin) : null,
         password_hash: undefined,
         password_cipher: undefined,
-        // 直链：/d/{id} 跳过 HTML 页面直接进下载
-        direct_url: `/d/${s.id}`,
+        // 分享链接和直链分离 —— 各用各的 token
+        url: `/s/${s.id}`,
+        direct_url: s.direct_id ? `/d/${s.direct_id}` : null,
         status: s.revoked
           ? "revoked"
           : s.expires_at && s.expires_at < now

@@ -214,8 +214,8 @@ export async function handleShareInfo(req: Request, env: Env, token: string): Pr
     max_downloads: row.max_downloads,
     needs_password: !!row.password_hash,
     quota_exceeded: quotaExceeded,
-    // 直链：/d/{id} —— 跳过 HTML 页面直接进入下载流程
-    direct_download_url: `/d/${token}`,
+    // 直链与分享链接分离 —— 用独立的 direct_id
+    direct_download_url: row.direct_id ? `/d/${row.direct_id}` : null,
     site_title: settings.siteTitle,
     turnstile: {
       enabled,
@@ -238,12 +238,14 @@ export async function handleShareInfo(req: Request, env: Env, token: string): Pr
   });
 }
 
-async function getShare(env: Env, token: string): Promise<ShareWithFile | null> {
+async function getShare(env: Env, token: string, byDirectId = false): Promise<ShareWithFile | null> {
+  // 分享链接 /s/:token 用 id 查；直链 /d/:token 用 direct_id 查
+  const idCol = byDirectId ? "s.direct_id" : "s.id";
   return await env.db.prepare(
-    `SELECT s.id, s.file_id, s.created_at, s.expires_at, s.max_downloads, s.download_count, s.revoked, s.password_hash,
+    `SELECT s.id, s.direct_id, s.file_id, s.created_at, s.expires_at, s.max_downloads, s.download_count, s.revoked, s.password_hash,
             s.download_name, f.key, f.name, f.size, f.mime
      FROM shares s JOIN files f ON f.id = s.file_id
-     WHERE s.id = ?1`
+     WHERE ${idCol} = ?1`
   )
     .bind(token)
     .first<ShareWithFile>();
@@ -282,12 +284,15 @@ export async function handleVerify(req: Request, env: Env, token: string): Promi
   return json({ ok: true, url: `/s/${token}/download?t=${ticket}` });
 }
 
-/** GET /s/:token/download —— 下载主流程：封禁检查 → 有效性检查 → 流量限额 → 重复下载封禁 → 流式输出 */
+/** GET /s/:token/download —— 下载主流程：封禁检查 → 有效性检查 → 流量限额 → 重复下载封禁 → 流式输出
+ *  tokenType: "share" = 分享链接 token（/s/:id）；"direct" = 直链 token（/d/:direct_id）
+ */
 export async function handleDownload(
   req: Request,
   env: Env,
   ctx: ExecutionContext,
-  token: string
+  token: string,
+  tokenType: "share" | "direct" = "share"
 ): Promise<Response> {
   const ip = clientIp(req);
   const ua = req.headers.get("user-agent") ?? "";
@@ -312,7 +317,7 @@ export async function handleDownload(
       "SELECT reason, expires_at FROM banned_ips WHERE ip = ?1"
     ).bind(ip).first<{ reason: string | null; expires_at: number | null }>(),
     // 分享元数据查询
-    getShare(env, token),
+    getShare(env, token, tokenType === "direct"),
   ]);
 
   // ══ 激活码校验 ══
