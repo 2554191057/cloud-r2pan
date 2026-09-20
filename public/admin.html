@@ -1380,6 +1380,7 @@ async function completeUpload(uploadId, fileName, totalSize, totalChunks, mime) 
   const resp = await fetch('/api/admin/upload-complete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
     body: JSON.stringify({ uploadId, fileName, totalSize, totalChunks, mime })
   });
   if (!resp.ok) throw new Error('Complete upload failed');
