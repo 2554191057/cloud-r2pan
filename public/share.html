@@ -899,83 +899,18 @@ async function downloadWithPicker(url, filename, meta) {
       blob = await response.blob();
     }
     
-    // 检查是否支持 File System Access API
-    if (window.showSaveFilePicker) {
-      // 弹出"另存为"对话框
-      const fileHandle = await window.showSaveFilePicker({
-        suggestedName: filename || 'download'
-      });
-      
-      // 写入用户选择的文件
-      const writable = await fileHandle.createWritable();
-      await writable.write(blob);
-      await writable.close();
-    } else {
-      // 不支持，降级到普通下载
-      const a = document.createElement('a');
-      const blobUrl = URL.createObjectURL(blob);
-      a.href = blobUrl;
-      a.download = filename || 'download';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-    }
+    // 直接用普通下载方式（showSaveFilePicker 需要在用户手势同步调用栈中，异步下载完成后调用会报错）
+    const a = document.createElement('a');
+    const blobUrl = URL.createObjectURL(blob);
+    a.href = blobUrl;
+    a.download = filename || 'download';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
   } catch (e) {
-    // 用户取消了选择，或者出错了
     console.error('Download failed:', e);
-  }
-}
-
-async function triggerDownload(d, ts, tsEnabled, tsOnDownload){
-  const baseUrl = `/s/${token}/download`;
-  // 读取已绑定的激活码（从 localStorage）
-  const code = getBoundCode();
-  
-  // 解析 meta 字段，检查是否是分卷文件
-  let meta = null;
-  try {
-    if (d.meta) {
-      meta = typeof d.meta === 'string' ? JSON.parse(d.meta) : d.meta;
-    }
-  } catch(e) {
-    console.error('解析 meta 失败:', e);
-  }
-  const isChunked = meta && meta.isChunked;
-  
-  // both / on_download 模式：先确保有 token
-  if(tsEnabled && tsOnDownload){
-    let tk = window.__tsToken;
-    if(!tk){
-      // 还没渲染过 → 现在渲染
-      const box = document.createElement('div');
-      box.style.cssText = 'margin-top:20px';
-      document.body.appendChild(box);
-      try{
-        tk = await renderTurnstile(box, ts.sitekey);
-        window.__tsToken = tk;
-        box.remove();
-      }catch{ box.remove(); return; }
-    }
-    let url = `${baseUrl}?cf=${tk}`;
-    if(code) url += `&code=${encodeURIComponent(code)}`;
-    
-    // 分卷文件用分块下载
-    if (isChunked) {
-      await downloadWithPicker(url, d.name, meta);
-    } else {
-      location.href = url;
-    }
-  } else {
-    let url = baseUrl;
-    if(code) url += `?code=${encodeURIComponent(code)}`;
-    
-    // 分卷文件用分块下载
-    if (isChunked) {
-      await downloadWithPicker(url, d.name, meta);
-    } else {
-      location.href = url;
-    }
+    alert('下载失败：' + e.message);
   }
 }
 
