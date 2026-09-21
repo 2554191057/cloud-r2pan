@@ -821,7 +821,7 @@ async function downloadChunked(url, filename, totalChunks) {
     
     // 更新进度
     const pct = Math.round((i + 1) / totalChunks * 100);
-    console.log(下载分块 /: %);
+    console.log(`下载分块 ${i + 1}/${totalChunks}: ${pct}%`);
     
     // 继续下载下一个
     await downloadNext();
@@ -849,7 +849,7 @@ async function downloadWithPicker(url, filename, meta) {
     
     if (isChunked) {
       // 分卷下载：依次下载所有分块并合并
-      console.log(分卷下载开始，共  个分块);
+      console.log(`分卷下载开始，共 ${totalChunks} 个分块`);
       blob = await downloadChunked(url, filename, totalChunks);
     } else {
       // 普通下载
@@ -1001,6 +1001,8 @@ boot();
 </script>
 </body>
 </html>
+
+
 
 
 
