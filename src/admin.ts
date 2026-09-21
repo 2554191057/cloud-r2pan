@@ -388,7 +388,7 @@ export async function handleAdminApi(
       totalSize: number;
       totalChunks: number;
       mime?: string;
-    }>();
+    }>(req);
     
     if (!body.uploadId || !body.fileName) {
       return json({ error: msg(req, "缺少参数", "Missing parameters") }, 400);
@@ -1743,6 +1743,8 @@ export async function handleAdminApi(
     }, 500);
   }
 }
+
+
 
 
 
