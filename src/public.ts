@@ -699,7 +699,7 @@ export async function handleChunkDownload(
   }
 
   // 从 R2 读取分块
-  const chunkKey = chunks//;
+  const chunkKey = `chunks/${meta.uploadId}/${chunkIndex}`;
   
   try {
     const st = await createStorageProvider(env, await getSettings(env));
@@ -724,4 +724,5 @@ export async function handleChunkDownload(
     return errorPage(req, 502, { zh: "存储服务错误", en: "Storage Error" }, {});
   }
 }
+
 
