@@ -810,33 +810,75 @@ async function downloadChunked(url, filename, totalChunks) {
   const chunks = new Array(totalChunks);
   let downloadedCount = 0;
   
+  // 创建进度显示
+  const progressDiv = document.createElement('div');
+  progressDiv.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.8);color:#fff;padding:16px 24px;border-radius:12px;z-index:9999;min-width:300px;text-align:center';
+  progressDiv.innerHTML = `
+    <div style="font-size:16px;margin-bottom:8px">正在下载...</div>
+    <div style="width:100%;height:8px;background:rgba(255,255,255,0.2);border-radius:4px;overflow:hidden">
+      <div id="progress-bar" style="width:0%;height:100%;background:linear-gradient(90deg,#3b82f6,#8b5cf6);transition:width 0.3s"></div>
+    </div>
+    <div id="progress-text" style="margin-top:8px;font-size:14px;opacity:0.8">0% (0/${totalChunks})</div>
+  `;
+  document.body.appendChild(progressDiv);
+  
+  function updateProgress() {
+    const pct = Math.round(downloadedCount / totalChunks * 100);
+    const bar = document.getElementById('progress-bar');
+    const text = document.getElementById('progress-text');
+    if (bar) bar.style.width = pct + '%';
+    if (text) text.textContent = `${pct}% (${downloadedCount}/${totalChunks})`;
+  }
+  
   async function downloadNext() {
     const i = downloadedCount++;
     if (i >= totalChunks) return;
     
-    const chunkUrl = url.replace('/download', '/chunk/' + i);
-    const response = await fetch(chunkUrl);
-    const blob = await response.blob();
-    chunks[i] = blob;
-    
-    // 更新进度
-    const pct = Math.round((i + 1) / totalChunks * 100);
-    console.log(`下载分块 ${i + 1}/${totalChunks}: ${pct}%`);
-    
-    // 继续下载下一个
-    await downloadNext();
+    try {
+      const chunkUrl = url.replace('/download', '/chunk/' + i);
+      const response = await fetch(chunkUrl);
+      const blob = await response.blob();
+      chunks[i] = blob;
+      
+      // 更新进度
+      updateProgress();
+      console.log(`下载分块 ${i + 1}/${totalChunks}: ${Math.round((i + 1) / totalChunks * 100)}%`);
+      
+      // 继续下载下一个
+      await downloadNext();
+    } catch (e) {
+      console.error(`下载分块 ${i} 失败:`, e);
+      throw e;
+    }
   }
   
-  // 启动多个并行下载
-  const downloadPromises = [];
-  for (let p = 0; p < Math.min(CONCURRENCY, totalChunks); p++) {
-    downloadPromises.push(downloadNext());
+  try {
+    // 启动多个并行下载
+    const downloadPromises = [];
+    for (let p = 0; p < Math.min(CONCURRENCY, totalChunks); p++) {
+      downloadPromises.push(downloadNext());
+    }
+    
+    await Promise.all(downloadPromises);
+    
+    // 合并所有分块
+    const blob = new Blob(chunks, { type: chunks[0].type || 'application/octet-stream' });
+    
+    // 更新进度为完成
+    const bar = document.getElementById('progress-bar');
+    const text = document.getElementById('progress-text');
+    if (bar) bar.style.width = '100%';
+    if (text) text.textContent = '100% - 正在合并文件...';
+    
+    return blob;
+  } finally {
+    // 延迟移除进度显示
+    setTimeout(() => {
+      if (progressDiv.parentNode) {
+        progressDiv.parentNode.removeChild(progressDiv);
+      }
+    }, 2000);
   }
-  
-  await Promise.all(downloadPromises);
-  
-  // 合并所有分块
-  return new Blob(chunks, { type: chunks[0].type || 'application/octet-stream' });
 }
 
 async function downloadWithPicker(url, filename, meta) {
