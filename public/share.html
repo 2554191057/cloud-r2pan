@@ -881,6 +881,58 @@ async function downloadChunked(url, filename, totalChunks) {
   }
 }
 
+async function triggerDownload(d, ts, tsEnabled, tsOnDownload){
+  const baseUrl = `/s/${token}/download`;
+  // 读取已绑定的激活码（从 localStorage）
+  const code = getBoundCode();
+  
+  // 解析 meta 字段，检查是否是分卷文件
+  let meta = null;
+  try {
+    if (d.meta) {
+      meta = typeof d.meta === 'string' ? JSON.parse(d.meta) : d.meta;
+    }
+  } catch(e) {
+    console.error('解析 meta 失败:', e);
+  }
+  const isChunked = meta && meta.isChunked;
+  
+  // both / on_download 模式：先确保有 token
+  if(tsEnabled && tsOnDownload){
+    let tk = window.__tsToken;
+    if(!tk){
+      // 还没渲染过 → 现在渲染
+      const box = document.createElement('div');
+      box.style.cssText = 'margin-top:20px';
+      document.body.appendChild(box);
+      try{
+        tk = await renderTurnstile(box, ts.sitekey);
+        window.__tsToken = tk;
+        box.remove();
+      }catch{ box.remove(); return; }
+    }
+    let url = `${baseUrl}?cf=${tk}`;
+    if(code) url += `&code=${encodeURIComponent(code)}`;
+    
+    // 分卷文件用分块下载
+    if (isChunked) {
+      await downloadWithPicker(url, d.name, meta);
+    } else {
+      location.href = url;
+    }
+  } else {
+    let url = baseUrl;
+    if(code) url += `?code=${encodeURIComponent(code)}`;
+    
+    // 分卷文件用分块下载
+    if (isChunked) {
+      await downloadWithPicker(url, d.name, meta);
+    } else {
+      location.href = url;
+    }
+  }
+}
+
 async function downloadWithPicker(url, filename, meta) {
   // 检查是否是分卷文件
   const isChunked = meta && meta.isChunked;
