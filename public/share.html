@@ -889,6 +889,18 @@ async function triggerDownload(d, ts, tsEnabled, tsOnDownload){
   const baseUrl = `/s/${token}/download`;
   // 读取已绑定的激活码（从 localStorage）
   const code = getBoundCode();
+  
+  // 解析 meta 字段，检查是否是分卷文件
+  let meta = null;
+  try {
+    if (d.meta) {
+      meta = typeof d.meta === 'string' ? JSON.parse(d.meta) : d.meta;
+    }
+  } catch(e) {
+    console.error('解析 meta 失败:', e);
+  }
+  const isChunked = meta && meta.isChunked;
+  
   // both / on_download 模式：先确保有 token
   if(tsEnabled && tsOnDownload){
     let tk = window.__tsToken;
@@ -905,11 +917,23 @@ async function triggerDownload(d, ts, tsEnabled, tsOnDownload){
     }
     let url = `${baseUrl}?cf=${tk}`;
     if(code) url += `&code=${encodeURIComponent(code)}`;
-    location.href = url;
+    
+    // 分卷文件用分块下载
+    if (isChunked) {
+      await downloadWithPicker(url, d.name, meta);
+    } else {
+      location.href = url;
+    }
   } else {
     let url = baseUrl;
     if(code) url += `?code=${encodeURIComponent(code)}`;
-    location.href = url;
+    
+    // 分卷文件用分块下载
+    if (isChunked) {
+      await downloadWithPicker(url, d.name, meta);
+    } else {
+      location.href = url;
+    }
   }
 }
 
