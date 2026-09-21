@@ -702,7 +702,7 @@ export async function handleChunkDownload(
   const chunkKey = `chunks/${meta.uploadId}/${chunkIndex}`;
   
   try {
-    const st = await createStorageProvider(env, await getSettings(env));
+    const st = await storage(env);
     const obj = await st.get(chunkKey);
     
     if (!obj) {
@@ -724,5 +724,7 @@ export async function handleChunkDownload(
     return errorPage(req, 502, { zh: "存储服务错误", en: "Storage Error" }, {});
   }
 }
+
+
 
 

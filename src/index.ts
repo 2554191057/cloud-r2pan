@@ -1,7 +1,7 @@
 ﻿import type { Env } from "./types";
 import { ensureSchema } from "./db";
 import { handleAdminApi } from "./admin";
-import { handleDownload, handleDirectDownload, handleShareInfo, handleVerify } from "./public";
+import { handleDownload, handleDirectDownload, handleShareInfo, handleVerify, handleChunkDownload } from "./public";
 import { serveAdminPage, serveSharePage, serveMarketPage, errorPage } from "./pages";
 import {
   handleOAuthStart,
@@ -303,4 +303,5 @@ function notFound(req: Request): Response {
     { zh: "请求的地址无效。", en: "The requested address is invalid." }
   );
 }
+
 
